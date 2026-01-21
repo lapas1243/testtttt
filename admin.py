@@ -2855,9 +2855,6 @@ Reply with a number:"""
 # --- Discount Code Creation: City Selection (Step 4) ---
 def _get_available_cities_from_db():
     """Get list of all cities from database."""
-    # #region agent log
-    logger.warning(f"[DEBUG-A] _get_available_cities_from_db ENTRY: CITIES.keys()={list(CITIES.keys())[:5]}, CITIES.values()={list(CITIES.values())[:5]}, len={len(CITIES)}")
-    # #endregion
     cities_list = []
     conn = None
     try:
@@ -2865,9 +2862,6 @@ def _get_available_cities_from_db():
         c = conn.cursor()
         c.execute("SELECT DISTINCT city FROM products WHERE city IS NOT NULL AND city != '' ORDER BY city")
         raw_cities = [row['city'] for row in c.fetchall()]
-        # #region agent log
-        logger.warning(f"[DEBUG-B] Raw cities from DB query: {raw_cities}")
-        # #endregion
         
         # Convert city IDs to names using CITIES dict if needed
         # CITIES has {id: name} structure, so check if raw value is an ID
@@ -2875,13 +2869,10 @@ def _get_available_cities_from_db():
             if raw_city in CITIES:
                 # It's an ID, convert to name
                 city_name = CITIES[raw_city]
-                # #region agent log
-                logger.warning(f"[DEBUG-C] Converted city ID '{raw_city}' to name '{city_name}'")
-                # #endregion
                 if city_name and city_name not in cities_list:
                     cities_list.append(city_name)
             elif raw_city not in CITIES.values():
-                # It's neither an ID nor already a known name - might be a name already
+                # It's neither an ID nor already a known name
                 # Only add if it looks like a real city name (not a number)
                 if raw_city and not raw_city.isdigit():
                     cities_list.append(raw_city)
@@ -2901,11 +2892,7 @@ def _get_available_cities_from_db():
             if city_name and city_name not in cities_list:
                 cities_list.append(city_name)
     
-    final_result = sorted(set(cities_list))
-    # #region agent log
-    logger.warning(f"[DEBUG-A] _get_available_cities_from_db EXIT: final_cities={final_result}")
-    # #endregion
-    return final_result
+    return sorted(set(cities_list))
 
 
 async def _show_discount_city_selection(bot, chat_id, context):
@@ -2943,32 +2930,22 @@ Selected: {', '.join(selected_cities) if selected_cities else '🌍 All cities'}
     keyboard = []
     available_cities = _get_available_cities_from_db()
     
-    # #region agent log
-    logger.warning(f"[DEBUG-D] Building buttons with available_cities={available_cities}")
-    # #endregion
-    
     if not available_cities:
         # No cities found, show message
         msg += "\n⚠️ No cities found in database. Code will work everywhere."
     else:
         # Add city toggle buttons (2 per row)
         city_row = []
-        button_texts = []  # For debug logging
         for city_name in available_cities:
             is_selected = city_name in selected_cities
             emoji = "✅" if is_selected else "⬜"
-            button_text = f"{emoji} {city_name}"
-            button_texts.append(button_text)
-            button = InlineKeyboardButton(button_text, callback_data=f"adm_discount_toggle_city|{city_name}")
+            button = InlineKeyboardButton(f"{emoji} {city_name}", callback_data=f"adm_discount_toggle_city|{city_name}")
             city_row.append(button)
             if len(city_row) == 2:
                 keyboard.append(city_row)
                 city_row = []
         if city_row:  # Add remaining buttons
             keyboard.append(city_row)
-        # #region agent log
-        logger.warning(f"[DEBUG-D] Button texts created: {button_texts}")
-        # #endregion
     
     # Control buttons
     keyboard.append([InlineKeyboardButton("🌍 All Cities (Clear Selection)", callback_data="adm_discount_clear_cities")])
