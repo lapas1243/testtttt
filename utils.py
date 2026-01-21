@@ -1468,7 +1468,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )''')
             
-            # MIGRATION: Add allowed_cities, allowed_product_types, allowed_sizes columns to discount_codes table
+            # MIGRATION: Add allowed_cities, allowed_product_types, allowed_sizes, max_uses_per_user columns to discount_codes table
             try:
                 discount_cols = [col[1] for col in c.execute("PRAGMA table_info(discount_codes)").fetchall()]
                 if 'allowed_cities' not in discount_cols:
@@ -1480,6 +1480,9 @@ def init_db():
                 if 'allowed_sizes' not in discount_cols:
                     c.execute("ALTER TABLE discount_codes ADD COLUMN allowed_sizes TEXT DEFAULT NULL")
                     logger.info("Added allowed_sizes column to discount_codes table")
+                if 'max_uses_per_user' not in discount_cols:
+                    c.execute("ALTER TABLE discount_codes ADD COLUMN max_uses_per_user INTEGER DEFAULT NULL")
+                    logger.info("Added max_uses_per_user column to discount_codes table")
             except Exception as dc_migration_e:
                 logger.warning(f"Could not add discount columns (may already exist): {dc_migration_e}")
             

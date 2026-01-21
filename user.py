@@ -1301,6 +1301,29 @@ def validate_and_apply_discount_atomic(code_text: str, base_total_float: float, 
             except (json_module.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Invalid allowed_sizes JSON for code {code_data['code']}: {e}")
 
+        # Check per-user usage limit
+        try:
+            max_uses_per_user = code_data['max_uses_per_user']
+        except (KeyError, IndexError):
+            max_uses_per_user = None
+        
+        if max_uses_per_user is not None:
+            # Count how many times this user has used this code
+            c.execute("""
+                SELECT COUNT(*) as use_count FROM discount_code_usage 
+                WHERE user_id = ? AND UPPER(code) = ?
+            """, (user_id, normalized_code))
+            user_usage = c.fetchone()
+            user_use_count = user_usage['use_count'] if user_usage else 0
+            
+            if user_use_count >= max_uses_per_user:
+                logger.info(f"User {user_id} has already used code '{code_data['code']}' {user_use_count}/{max_uses_per_user} times")
+                conn.rollback()
+                if max_uses_per_user == 1:
+                    return False, "You have already used this code.", None
+                else:
+                    return False, f"You have already used this code {user_use_count} times (limit: {max_uses_per_user}).", None
+
         # Check minimum order amount
         try:
             min_order_amount = code_data['min_order_amount']

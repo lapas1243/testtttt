@@ -2365,7 +2365,7 @@ async def handle_adm_manage_discounts(update: Update, context: ContextTypes.DEFA
         conn = get_db_connection()
         c = conn.cursor()
         c.execute("""
-            SELECT id, code, discount_type, value, is_active, max_uses, uses_count, expiry_date, allowed_cities, allowed_product_types, allowed_sizes
+            SELECT id, code, discount_type, value, is_active, max_uses, uses_count, expiry_date, allowed_cities, allowed_product_types, allowed_sizes, max_uses_per_user
             FROM discount_codes ORDER BY created_date DESC
         """)
         codes = c.fetchall()
@@ -2443,6 +2443,15 @@ async def handle_adm_manage_discounts(update: Update, context: ContextTypes.DEFA
                 except:
                     pass
                 
+                # Per-user limit
+                per_user_info = ""
+                try:
+                    max_per_user = code['max_uses_per_user']
+                    if max_per_user is not None:
+                        per_user_info = f"👤 Per User: {max_per_user}x"
+                except:
+                    pass
+                
                 # Build code entry
                 code_text = code['code']
                 msg += f"━━━━━━━━━━━━━━━━━━\n"
@@ -2450,6 +2459,8 @@ async def handle_adm_manage_discounts(update: Update, context: ContextTypes.DEFA
                 msg += f"{type_emoji} Value: {value_str}\n"
                 msg += f"{status_emoji} Status: {status_text}\n"
                 msg += f"{usage_info}\n"
+                if per_user_info:
+                    msg += f"{per_user_info}\n"
                 if expiry_info:
                     msg += f"{expiry_info}\n"
                 if cities_info:
@@ -3393,9 +3404,9 @@ Selected: {', '.join(selected_sizes) if selected_sizes else '⚖️ All sizes'}
             await query.edit_message_text(plain_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
 
 
-# --- Discount Code Creation: Usage Limit (Step 7) ---
+# --- Discount Code Creation: Total Usage Limit (Step 7) ---
 async def handle_adm_discount_usage_limit(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Show usage limit selection (Step 7)."""
+    """Show total usage limit selection (Step 7)."""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id): return await query.answer("Access Denied.", show_alert=True)
     
@@ -3417,7 +3428,7 @@ async def handle_adm_discount_usage_limit(update: Update, context: ContextTypes.
     msg = f"""🏷️ *Create New Discount Code*
 
 ━━━━━━━━━━━━━━━━━━
-📌 *Step 7 of 8: Usage Limit*
+📌 *Step 7 of 9: Total Usage Limit*
 ━━━━━━━━━━━━━━━━━━
 
 ✅ Code: `{code_text}`
@@ -3427,18 +3438,16 @@ async def handle_adm_discount_usage_limit(update: Update, context: ContextTypes.
 ✅ Products: {products_display}
 ✅ Sizes: {sizes_display}
 
-🔢 *How many times can this code be used?*
-(Total uses across all users)
+🔢 *Total uses across ALL users:*
+(How many times can this code be used in total?)
 
-Choose a preset or enter custom limit:"""
+Example: Set to 100 = code stops working after 100 total uses"""
 
     keyboard = [
-        [InlineKeyboardButton("1️⃣ Single Use (1)", callback_data="adm_discount_set_limit|1")],
-        [InlineKeyboardButton("2️⃣ Two Uses (2)", callback_data="adm_discount_set_limit|2")],
-        [InlineKeyboardButton("5️⃣ Five Uses (5)", callback_data="adm_discount_set_limit|5")],
         [InlineKeyboardButton("🔟 Ten Uses (10)", callback_data="adm_discount_set_limit|10")],
         [InlineKeyboardButton("5️⃣0️⃣ Fifty Uses (50)", callback_data="adm_discount_set_limit|50")],
-        [InlineKeyboardButton("♾️ Unlimited", callback_data="adm_discount_set_limit|unlimited")],
+        [InlineKeyboardButton("💯 Hundred Uses (100)", callback_data="adm_discount_set_limit|100")],
+        [InlineKeyboardButton("♾️ Unlimited Total", callback_data="adm_discount_set_limit|unlimited")],
         [InlineKeyboardButton("✏️ Enter Custom Limit", callback_data="adm_discount_custom_limit")],
         [InlineKeyboardButton("❌ Cancel", callback_data="adm_manage_discounts")]
     ]
@@ -3452,7 +3461,7 @@ Choose a preset or enter custom limit:"""
 
 
 async def handle_adm_discount_set_limit(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Sets the usage limit and moves to final confirmation."""
+    """Sets the total usage limit and moves to per-user limit."""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id): return await query.answer("Access Denied.", show_alert=True)
     if not params: return await query.answer("Error: Limit missing.", show_alert=True)
@@ -3462,35 +3471,35 @@ async def handle_adm_discount_set_limit(update: Update, context: ContextTypes.DE
     
     if limit_value == 'unlimited':
         discount_info['max_uses'] = None
-        await query.answer("Set to unlimited uses")
+        await query.answer("Set to unlimited total uses")
     else:
         try:
             discount_info['max_uses'] = int(limit_value)
-            await query.answer(f"Set limit to {limit_value} uses")
+            await query.answer(f"Set total limit to {limit_value} uses")
         except ValueError:
             await query.answer("Invalid limit value", show_alert=True)
             return
     
     context.user_data['new_discount_info'] = discount_info
     
-    # Move to expiry date selection
-    await _show_discount_expiry_selection(query, context)
+    # Move to per-user limit selection (Step 8)
+    await _show_discount_per_user_limit(query, context)
 
 
 async def handle_adm_discount_custom_limit(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Prompts admin to enter a custom usage limit."""
+    """Prompts admin to enter a custom total usage limit."""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id): return await query.answer("Access Denied.", show_alert=True)
     
     context.user_data['state'] = 'awaiting_discount_custom_limit'
     
-    msg = """✏️ *Enter Custom Usage Limit*
+    msg = """✏️ *Enter Custom Total Usage Limit*
 
-Please reply with a number for how many times this code can be used.
+Please reply with a number for how many times this code can be used in total.
 
 Examples:
-• 3 = Code can be used 3 times total
-• 100 = Code can be used 100 times total"""
+• 25 = Code can be used 25 times total across all users
+• 500 = Code can be used 500 times total"""
 
     keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="adm_discount_usage_limit")]]
     
@@ -3501,7 +3510,7 @@ Examples:
 
 
 async def handle_adm_discount_custom_limit_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles admin entering custom usage limit."""
+    """Handles admin entering custom total usage limit."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
@@ -3532,16 +3541,16 @@ async def handle_adm_discount_custom_limit_message(update: Update, context: Cont
     context.user_data['new_discount_info'] = discount_info
     context.user_data.pop('state', None)
     
-    # Send confirmation then show expiry selection
-    await send_message_with_retry(context.bot, chat_id, f"✅ Set usage limit to {limit_value}", parse_mode=None)
+    # Send confirmation then show per-user limit selection
+    await send_message_with_retry(context.bot, chat_id, f"✅ Set total usage limit to {limit_value}", parse_mode=None)
     
-    # Move to expiry date - need to create a fake query-like object
-    await _show_discount_expiry_selection_from_message(context.bot, chat_id, context)
+    # Move to per-user limit selection
+    await _show_discount_per_user_limit_from_message(context.bot, chat_id, context)
 
 
-# --- Discount Code Creation: Expiry Date (Step 8 - Final) ---
-async def _show_discount_expiry_selection(query, context):
-    """Show expiry date selection options."""
+# --- Discount Code Creation: Per-User Limit (Step 8) ---
+async def _show_discount_per_user_limit(query, context):
+    """Show per-user limit selection options."""
     discount_info = context.user_data.get('new_discount_info', {})
     code_text = discount_info.get('code', 'N/A')
     dtype = discount_info.get('type', 'percentage')
@@ -3557,12 +3566,12 @@ async def _show_discount_expiry_selection(query, context):
     cities_display = ", ".join(selected_cities) if selected_cities else "All cities"
     products_display = ", ".join(selected_products) if selected_products else "All products"
     sizes_display = ", ".join(selected_sizes) if selected_sizes else "All sizes"
-    uses_display = str(max_uses) if max_uses else "Unlimited"
+    total_uses_display = str(max_uses) if max_uses else "Unlimited"
     
     msg = f"""🏷️ *Create New Discount Code*
 
 ━━━━━━━━━━━━━━━━━━
-📌 *Step 8 of 8: Expiry Date*
+📌 *Step 8 of 9: Per-User Limit*
 ━━━━━━━━━━━━━━━━━━
 
 ✅ Code: `{code_text}`
@@ -3571,7 +3580,197 @@ async def _show_discount_expiry_selection(query, context):
 ✅ Cities: {cities_display}
 ✅ Products: {products_display}
 ✅ Sizes: {sizes_display}
-✅ Usage Limit: {uses_display}
+✅ Total Uses: {total_uses_display}
+
+👤 *How many times can EACH USER use this code?*
+
+Example: 
+• "Once" = Each user can only use this code 1 time
+• "Unlimited" = Each user can use it as many times as they want"""
+
+    keyboard = [
+        [InlineKeyboardButton("1️⃣ Once Per User", callback_data="adm_discount_set_per_user|1")],
+        [InlineKeyboardButton("2️⃣ Twice Per User", callback_data="adm_discount_set_per_user|2")],
+        [InlineKeyboardButton("3️⃣ Three Times Per User", callback_data="adm_discount_set_per_user|3")],
+        [InlineKeyboardButton("5️⃣ Five Times Per User", callback_data="adm_discount_set_per_user|5")],
+        [InlineKeyboardButton("♾️ Unlimited Per User", callback_data="adm_discount_set_per_user|unlimited")],
+        [InlineKeyboardButton("✏️ Enter Custom Limit", callback_data="adm_discount_custom_per_user")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="adm_manage_discounts")]
+    ]
+    
+    try:
+        await query.edit_message_text(helpers.escape_markdown(msg, version=2), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN_V2)
+    except telegram_error.BadRequest as e:
+        if "message is not modified" not in str(e).lower():
+            plain_msg = msg.replace('*', '').replace('`', '')
+            await query.edit_message_text(plain_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
+
+
+async def _show_discount_per_user_limit_from_message(bot, chat_id, context):
+    """Show per-user limit selection (called from message handler)."""
+    discount_info = context.user_data.get('new_discount_info', {})
+    code_text = discount_info.get('code', 'N/A')
+    dtype = discount_info.get('type', 'percentage')
+    value = discount_info.get('value', 0)
+    value_str = format_discount_value(dtype, value)
+    max_uses = discount_info.get('max_uses')
+    
+    type_emoji = "📊" if dtype == 'percentage' else "💰"
+    type_display = "Percentage" if dtype == 'percentage' else "Fixed Amount"
+    total_uses_display = str(max_uses) if max_uses else "Unlimited"
+    
+    msg = f"""🏷️ *Create New Discount Code*
+
+━━━━━━━━━━━━━━━━━━
+📌 *Step 8 of 9: Per-User Limit*
+━━━━━━━━━━━━━━━━━━
+
+✅ Code: `{code_text}`
+✅ Type: {type_emoji} {type_display}
+✅ Value: {value_str}
+✅ Total Uses: {total_uses_display}
+
+👤 *How many times can EACH USER use this code?*"""
+
+    keyboard = [
+        [InlineKeyboardButton("1️⃣ Once Per User", callback_data="adm_discount_set_per_user|1")],
+        [InlineKeyboardButton("2️⃣ Twice Per User", callback_data="adm_discount_set_per_user|2")],
+        [InlineKeyboardButton("3️⃣ Three Times Per User", callback_data="adm_discount_set_per_user|3")],
+        [InlineKeyboardButton("♾️ Unlimited Per User", callback_data="adm_discount_set_per_user|unlimited")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="adm_manage_discounts")]
+    ]
+    
+    try:
+        await send_message_with_retry(bot, chat_id, helpers.escape_markdown(msg, version=2), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN_V2)
+    except telegram_error.BadRequest:
+        plain_msg = msg.replace('*', '').replace('`', '')
+        await send_message_with_retry(bot, chat_id, plain_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
+
+
+async def handle_adm_discount_set_per_user(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Sets the per-user limit and moves to expiry date."""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id): return await query.answer("Access Denied.", show_alert=True)
+    if not params: return await query.answer("Error: Limit missing.", show_alert=True)
+    
+    limit_value = params[0]
+    discount_info = context.user_data.get('new_discount_info', {})
+    
+    if limit_value == 'unlimited':
+        discount_info['max_uses_per_user'] = None
+        await query.answer("Set to unlimited per user")
+    else:
+        try:
+            discount_info['max_uses_per_user'] = int(limit_value)
+            await query.answer(f"Each user can use {limit_value} time(s)")
+        except ValueError:
+            await query.answer("Invalid limit value", show_alert=True)
+            return
+    
+    context.user_data['new_discount_info'] = discount_info
+    
+    # Move to expiry date selection (Step 9)
+    await _show_discount_expiry_selection(query, context)
+
+
+async def handle_adm_discount_custom_per_user(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Prompts admin to enter a custom per-user limit."""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id): return await query.answer("Access Denied.", show_alert=True)
+    
+    context.user_data['state'] = 'awaiting_discount_custom_per_user'
+    
+    msg = """✏️ *Enter Custom Per-User Limit*
+
+Please reply with a number for how many times each user can use this code.
+
+Examples:
+• 1 = Each user can use this code once
+• 10 = Each user can use this code up to 10 times"""
+
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="adm_discount_per_user_limit")]]
+    
+    try:
+        await query.edit_message_text(helpers.escape_markdown(msg, version=2), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN_V2)
+    except telegram_error.BadRequest:
+        await query.edit_message_text(msg.replace('*', ''), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
+
+
+async def handle_adm_discount_custom_per_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles admin entering custom per-user limit."""
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    if not is_primary_admin(user_id):
+        return
+    
+    if context.user_data.get("state") != 'awaiting_discount_custom_per_user':
+        return
+    
+    if not update.message or not update.message.text:
+        await send_message_with_retry(context.bot, chat_id, "Please enter a number.", parse_mode=None)
+        return
+    
+    try:
+        limit_value = int(update.message.text.strip())
+        if limit_value <= 0:
+            await send_message_with_retry(context.bot, chat_id, "❌ Limit must be greater than 0.", parse_mode=None)
+            return
+        if limit_value > 1000:
+            await send_message_with_retry(context.bot, chat_id, "❌ Limit too high. Maximum is 1,000 per user.", parse_mode=None)
+            return
+    except ValueError:
+        await send_message_with_retry(context.bot, chat_id, "❌ Invalid number. Please enter a whole number.", parse_mode=None)
+        return
+    
+    discount_info = context.user_data.get('new_discount_info', {})
+    discount_info['max_uses_per_user'] = limit_value
+    context.user_data['new_discount_info'] = discount_info
+    context.user_data.pop('state', None)
+    
+    # Send confirmation then show expiry selection
+    await send_message_with_retry(context.bot, chat_id, f"✅ Each user can use this code {limit_value} time(s)", parse_mode=None)
+    
+    # Move to expiry date selection
+    await _show_discount_expiry_selection_from_message(context.bot, chat_id, context)
+
+
+# --- Discount Code Creation: Expiry Date (Step 9 - Final) ---
+async def _show_discount_expiry_selection(query, context):
+    """Show expiry date selection options."""
+    discount_info = context.user_data.get('new_discount_info', {})
+    code_text = discount_info.get('code', 'N/A')
+    dtype = discount_info.get('type', 'percentage')
+    value = discount_info.get('value', 0)
+    value_str = format_discount_value(dtype, value)
+    selected_cities = discount_info.get('allowed_cities', [])
+    selected_products = discount_info.get('allowed_product_types', [])
+    selected_sizes = discount_info.get('allowed_sizes', [])
+    max_uses = discount_info.get('max_uses')
+    max_uses_per_user = discount_info.get('max_uses_per_user')
+    
+    type_emoji = "📊" if dtype == 'percentage' else "💰"
+    type_display = "Percentage" if dtype == 'percentage' else "Fixed Amount"
+    cities_display = ", ".join(selected_cities) if selected_cities else "All cities"
+    products_display = ", ".join(selected_products) if selected_products else "All products"
+    sizes_display = ", ".join(selected_sizes) if selected_sizes else "All sizes"
+    total_uses_display = str(max_uses) if max_uses else "Unlimited"
+    per_user_display = str(max_uses_per_user) if max_uses_per_user else "Unlimited"
+    
+    msg = f"""🏷️ *Create New Discount Code*
+
+━━━━━━━━━━━━━━━━━━
+📌 *Step 9 of 9: Expiry Date*
+━━━━━━━━━━━━━━━━━━
+
+✅ Code: `{code_text}`
+✅ Type: {type_emoji} {type_display}
+✅ Value: {value_str}
+✅ Cities: {cities_display}
+✅ Products: {products_display}
+✅ Sizes: {sizes_display}
+✅ Total Uses: {total_uses_display}
+✅ Per User: {per_user_display}
 
 📅 *When should this code expire?*
 (After expiry, code will stop working)
@@ -3603,31 +3802,25 @@ async def _show_discount_expiry_selection_from_message(bot, chat_id, context):
     dtype = discount_info.get('type', 'percentage')
     value = discount_info.get('value', 0)
     value_str = format_discount_value(dtype, value)
-    selected_cities = discount_info.get('allowed_cities', [])
-    selected_products = discount_info.get('allowed_product_types', [])
-    selected_sizes = discount_info.get('allowed_sizes', [])
     max_uses = discount_info.get('max_uses')
+    max_uses_per_user = discount_info.get('max_uses_per_user')
     
     type_emoji = "📊" if dtype == 'percentage' else "💰"
     type_display = "Percentage" if dtype == 'percentage' else "Fixed Amount"
-    cities_display = ", ".join(selected_cities) if selected_cities else "All cities"
-    products_display = ", ".join(selected_products) if selected_products else "All products"
-    sizes_display = ", ".join(selected_sizes) if selected_sizes else "All sizes"
-    uses_display = str(max_uses) if max_uses else "Unlimited"
+    total_uses_display = str(max_uses) if max_uses else "Unlimited"
+    per_user_display = str(max_uses_per_user) if max_uses_per_user else "Unlimited"
     
     msg = f"""🏷️ *Create New Discount Code*
 
 ━━━━━━━━━━━━━━━━━━
-📌 *Step 8 of 8: Expiry Date*
+📌 *Step 9 of 9: Expiry Date*
 ━━━━━━━━━━━━━━━━━━
 
 ✅ Code: `{code_text}`
 ✅ Type: {type_emoji} {type_display}
 ✅ Value: {value_str}
-✅ Cities: {cities_display}
-✅ Products: {products_display}
-✅ Sizes: {sizes_display}
-✅ Usage Limit: {uses_display}
+✅ Total Uses: {total_uses_display}
+✅ Per User: {per_user_display}
 
 📅 *When should this code expire?*"""
 
@@ -3694,8 +3887,8 @@ async def handle_adm_discount_set_expiry(update: Update, context: ContextTypes.D
         
         # Insert new discount code
         c.execute("""
-            INSERT INTO discount_codes (code, discount_type, value, is_active, max_uses, uses_count, created_date, expiry_date, allowed_cities, allowed_product_types, allowed_sizes)
-            VALUES (?, ?, ?, 1, ?, 0, ?, ?, ?, ?, ?)
+            INSERT INTO discount_codes (code, discount_type, value, is_active, max_uses, uses_count, created_date, expiry_date, allowed_cities, allowed_product_types, allowed_sizes, max_uses_per_user)
+            VALUES (?, ?, ?, 1, ?, 0, ?, ?, ?, ?, ?, ?)
         """, (
             discount_info['code'],
             discount_info['type'],
@@ -3705,7 +3898,8 @@ async def handle_adm_discount_set_expiry(update: Update, context: ContextTypes.D
             discount_info.get('expiry_date'),
             allowed_cities_json,
             allowed_product_types_json,
-            allowed_sizes_json
+            allowed_sizes_json,
+            discount_info.get('max_uses_per_user')
         ))
         
         conn.commit()
@@ -3715,7 +3909,8 @@ async def handle_adm_discount_set_expiry(update: Update, context: ContextTypes.D
         cities_display = ", ".join(discount_info.get('allowed_cities', [])) if discount_info.get('allowed_cities') else "All cities"
         products_display = ", ".join(discount_info.get('allowed_product_types', [])) if discount_info.get('allowed_product_types') else "All products"
         sizes_display = ", ".join(discount_info.get('allowed_sizes', [])) if discount_info.get('allowed_sizes') else "All sizes"
-        uses_display = str(discount_info.get('max_uses')) if discount_info.get('max_uses') else "Unlimited"
+        total_uses_display = str(discount_info.get('max_uses')) if discount_info.get('max_uses') else "Unlimited"
+        per_user_display = str(discount_info.get('max_uses_per_user')) if discount_info.get('max_uses_per_user') else "Unlimited"
         
         if discount_info.get('expiry_date'):
             try:
@@ -3734,7 +3929,8 @@ async def handle_adm_discount_set_expiry(update: Update, context: ContextTypes.D
 🏙️ Cities: {cities_display}
 📦 Products: {products_display}
 ⚖️ Sizes: {sizes_display}
-🔢 Usage Limit: {uses_display}
+🔢 Total Uses: {total_uses_display}
+👤 Per User: {per_user_display}
 📅 Expires: {expiry_display}
 ━━━━━━━━━━━━━━━━━━
 
@@ -3748,7 +3944,7 @@ The code is now active and ready to use!"""
             plain_msg = success_msg.replace('*', '').replace('`', '')
             await query.edit_message_text(plain_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=None)
         
-        logger.info(f"Admin {query.from_user.id} created discount code '{discount_info['code']}' (type={discount_info['type']}, value={discount_info['value']}, max_uses={discount_info.get('max_uses')}, cities={discount_info.get('allowed_cities')}, products={discount_info.get('allowed_product_types')}, sizes={discount_info.get('allowed_sizes')})")
+        logger.info(f"Admin {query.from_user.id} created discount code '{discount_info['code']}' (type={discount_info['type']}, value={discount_info['value']}, max_uses={discount_info.get('max_uses')}, max_uses_per_user={discount_info.get('max_uses_per_user')}, cities={discount_info.get('allowed_cities')})")
         
     except sqlite3.Error as e:
         logger.error(f"DB error creating discount code: {e}", exc_info=True)
