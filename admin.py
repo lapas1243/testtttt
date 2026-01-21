@@ -2864,16 +2864,37 @@ def _get_available_cities_from_db():
         conn = get_db_connection()
         c = conn.cursor()
         c.execute("SELECT DISTINCT city FROM products WHERE city IS NOT NULL AND city != '' ORDER BY city")
-        cities_list = [row['city'] for row in c.fetchall()]
+        raw_cities = [row['city'] for row in c.fetchall()]
         # #region agent log
-        logger.warning(f"[DEBUG-B] Cities from DB query: {cities_list}")
+        logger.warning(f"[DEBUG-B] Raw cities from DB query: {raw_cities}")
         # #endregion
+        
+        # Convert city IDs to names using CITIES dict if needed
+        # CITIES has {id: name} structure, so check if raw value is an ID
+        for raw_city in raw_cities:
+            if raw_city in CITIES:
+                # It's an ID, convert to name
+                city_name = CITIES[raw_city]
+                # #region agent log
+                logger.warning(f"[DEBUG-C] Converted city ID '{raw_city}' to name '{city_name}'")
+                # #endregion
+                if city_name and city_name not in cities_list:
+                    cities_list.append(city_name)
+            elif raw_city not in CITIES.values():
+                # It's neither an ID nor already a known name - might be a name already
+                # Only add if it looks like a real city name (not a number)
+                if raw_city and not raw_city.isdigit():
+                    cities_list.append(raw_city)
+            else:
+                # It's already a city name
+                if raw_city not in cities_list:
+                    cities_list.append(raw_city)
     except Exception as e:
         logger.error(f"Error fetching cities from DB: {e}")
     finally:
         if conn: conn.close()
     
-    # Also include cities from CITIES dict if not empty
+    # Also include cities from CITIES dict if not empty (as fallback)
     # NOTE: CITIES dict has {id: name} structure, so we need .values() for city names
     if CITIES:
         for city_name in CITIES.values():
