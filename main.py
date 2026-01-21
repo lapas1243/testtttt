@@ -695,13 +695,8 @@ async def perform_failover(failed_bot_id: str, original_bot_index: int) -> bool:
             
             logger.info(f"✅ FAILOVER SUCCESS: Now using @{me.username} (ID: {backup['bot_id']})")
             
-            await notify_admins_failover(
-                f"✅ Failover Complete!\n"
-                f"Bot {original_bot_index + 1} switched to backup.\n"
-                f"Old ID: {failed_bot_id}\n"
-                f"New ID: {backup['bot_id']} (@{me.username})",
-                exclude_bot_id=failed_bot_id
-            )
+            # Silent failover - no admin notification on success (seamless transition)
+            # Only notify on failures
             
             return True
             
@@ -719,21 +714,26 @@ async def perform_failover(failed_bot_id: str, original_bot_index: int) -> bool:
 
 async def bot_health_check_job(context: ContextTypes.DEFAULT_TYPE):
     """Periodic health check for all active bots."""
-    for bot_info in BOT_TOKENS:
-        bot_id = bot_info['bot_id']
-        
-        if bot_id in FAILOVER_STATE['failed_bot_ids']:
-            continue
-        
-        app = telegram_apps.get(bot_id)
-        if not app:
-            continue
-        
-        is_healthy = await check_bot_health(app, bot_info)
-        
-        if not is_healthy:
-            logger.warning(f"🚨 Health check FAILED for Bot {bot_info['index'] + 1} (ID: {bot_id})")
-            await perform_failover(bot_id, bot_info['index'])
+    try:
+        for bot_info in BOT_TOKENS:
+            bot_id = bot_info['bot_id']
+            
+            if bot_id in FAILOVER_STATE['failed_bot_ids']:
+                continue
+            
+            app = telegram_apps.get(bot_id)
+            if not app:
+                continue
+            
+            is_healthy = await check_bot_health(app, bot_info)
+            
+            if not is_healthy:
+                logger.warning(f"🚨 Health check FAILED for Bot {bot_info['index'] + 1} (ID: {bot_id})")
+                await perform_failover(bot_id, bot_info['index'])
+    except asyncio.CancelledError:
+        # Expected when application is stopping during failover - ignore
+        logger.debug("Health check job cancelled (expected during failover)")
+        pass
 
 
 # --- Error Handler ---
