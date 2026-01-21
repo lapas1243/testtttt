@@ -20,7 +20,11 @@ from telegram.ext import (
     PicklePersistence, JobQueue
 )
 from telegram.constants import ParseMode
-from telegram.error import Forbidden, BadRequest, NetworkError, RetryAfter, TelegramError
+from telegram.error import Forbidden, BadRequest, NetworkError, RetryAfter, TelegramError, InvalidToken
+try:
+    from telegram.error import Unauthorized
+except ImportError:
+    Unauthorized = InvalidToken  # Fallback for older versions
 
 # --- Flask Imports ---
 from flask import Flask, request, Response # Added for webhook server
@@ -45,7 +49,10 @@ from utils import (
     is_user_banned,  # Import ban check helper
     BOT_TOKENS,  # Multi-bot support
     # NOWPayments configuration
-    NOWPAYMENTS_API_KEY, NOWPAYMENTS_IPN_SECRET
+    NOWPAYMENTS_API_KEY, NOWPAYMENTS_IPN_SECRET,
+    # Failover support
+    BACKUP_TOKENS_MAP, FAILOVER_STATE, get_next_backup_token,
+    PRIMARY_ADMIN_IDS
 )
 import time  # For webhook processing
 
@@ -547,6 +554,171 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         logger.debug(f"No handler found for user {user_id} in state: {state}")
 
+# --- Bot Failover System ---
+failover_lock = asyncio.Lock()
+failover_in_progress = set()  # Track bots currently being failed over
+
+async def check_bot_health(application, bot_info: dict) -> bool:
+    """Check if a bot token is still valid by calling getMe."""
+    try:
+        me = await application.bot.get_me()
+        logger.debug(f"✅ Bot {bot_info['bot_id']} health check OK (@{me.username})")
+        return True
+    except (InvalidToken,) as e:
+        logger.error(f"🚨 Bot {bot_info['bot_id']} token INVALID: {e}")
+        return False
+    except Forbidden as e:
+        error_str = str(e).lower()
+        if "bot was blocked" in error_str or "user is deactivated" in error_str:
+            return True  # User blocked bot, not a token issue
+        logger.error(f"🚨 Bot {bot_info['bot_id']} FORBIDDEN (possibly banned): {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"Bot {bot_info['bot_id']} health check error (transient?): {e}")
+        return True  # Don't failover on transient network errors
+
+async def notify_admins_failover(message: str, exclude_bot_id: str = None):
+    """Send failover notification to admins via any working bot."""
+    for bot_id, app in telegram_apps.items():
+        if bot_id == exclude_bot_id or bot_id in FAILOVER_STATE['failed_bot_ids']:
+            continue
+        try:
+            for admin_id in PRIMARY_ADMIN_IDS:
+                try:
+                    await app.bot.send_message(chat_id=admin_id, text=f"🛡️ {message}")
+                except Exception as e:
+                    logger.debug(f"Could not notify admin {admin_id} via bot {bot_id}: {e}")
+            return True  # Success
+        except Exception as e:
+            logger.warning(f"Failed to send notification via bot {bot_id}: {e}")
+            continue
+    return False
+
+async def perform_failover(failed_bot_id: str, original_bot_index: int) -> bool:
+    """Perform failover from failed bot to backup token."""
+    global telegram_apps
+    
+    async with failover_lock:
+        # Check if already processing this bot
+        if failed_bot_id in failover_in_progress:
+            logger.info(f"Failover already in progress for bot {failed_bot_id}")
+            return False
+        
+        if failed_bot_id in FAILOVER_STATE['failed_bot_ids']:
+            logger.info(f"Bot {failed_bot_id} already marked as failed")
+            return False
+        
+        failover_in_progress.add(failed_bot_id)
+        
+        try:
+            # Get next backup token for this specific bot
+            backup = get_next_backup_token(original_bot_index)
+            
+            if not backup:
+                FAILOVER_STATE['failed_bot_ids'].add(failed_bot_id)
+                await notify_admins_failover(
+                    f"⚠️ CRITICAL: Bot {original_bot_index + 1} (ID: {failed_bot_id}) is DOWN!\n"
+                    f"No backup tokens available. Manual intervention required!",
+                    exclude_bot_id=failed_bot_id
+                )
+                return False
+            
+            logger.warning(f"🔄 FAILOVER: Bot {failed_bot_id} → Backup {backup['bot_id']}")
+            
+            # Mark old bot as failed
+            FAILOVER_STATE['failed_bot_ids'].add(failed_bot_id)
+            
+            # Stop the old application if it exists
+            old_app = telegram_apps.get(failed_bot_id)
+            if old_app:
+                try:
+                    await old_app.stop()
+                    await old_app.shutdown()
+                except Exception as e:
+                    logger.warning(f"Error stopping old bot {failed_bot_id}: {e}")
+            
+            # Create new application with backup token
+            defaults = Defaults(parse_mode=None, block=False)
+            persistence = PicklePersistence(filepath=f"bot_persistence_{backup['bot_id']}.pickle")
+            
+            new_app = (
+                ApplicationBuilder()
+                .token(backup['token'])
+                .defaults(defaults)
+                .persistence(persistence)
+                .build()
+            )
+            
+            # Add all handlers
+            new_app.add_handler(CommandHandler("start", start_command_wrapper))
+            new_app.add_handler(CommandHandler("admin", admin_command_wrapper))
+            new_app.add_handler(CallbackQueryHandler(handle_callback_query))
+            new_app.add_handler(MessageHandler(
+                (filters.TEXT & ~filters.COMMAND) | filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.Document.ALL,
+                handle_message
+            ))
+            new_app.add_error_handler(error_handler)
+            
+            # Initialize and set webhook
+            await new_app.initialize()
+            
+            webhook_url = f"{WEBHOOK_URL}/telegram/{backup['token']}"
+            await new_app.bot.set_webhook(url=webhook_url)
+            await new_app.start()
+            
+            # Verify the new bot works
+            me = await new_app.bot.get_me()
+            
+            # Update registries
+            telegram_apps[backup['bot_id']] = new_app
+            
+            # Register in shared bot registry
+            from utils import register_bot
+            register_bot(backup['bot_id'], new_app.bot)
+            
+            logger.info(f"✅ FAILOVER SUCCESS: Now using @{me.username} (ID: {backup['bot_id']})")
+            
+            await notify_admins_failover(
+                f"✅ Failover Complete!\n"
+                f"Bot {original_bot_index + 1} switched to backup.\n"
+                f"Old ID: {failed_bot_id}\n"
+                f"New ID: {backup['bot_id']} (@{me.username})",
+                exclude_bot_id=failed_bot_id
+            )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ FAILOVER FAILED for bot {failed_bot_id}: {e}", exc_info=True)
+            await notify_admins_failover(
+                f"❌ Failover FAILED!\n"
+                f"Bot {original_bot_index + 1} (ID: {failed_bot_id})\n"
+                f"Error: {str(e)[:100]}",
+                exclude_bot_id=failed_bot_id
+            )
+            return False
+        finally:
+            failover_in_progress.discard(failed_bot_id)
+
+async def bot_health_check_job(context: ContextTypes.DEFAULT_TYPE):
+    """Periodic health check for all active bots."""
+    for bot_info in BOT_TOKENS:
+        bot_id = bot_info['bot_id']
+        
+        if bot_id in FAILOVER_STATE['failed_bot_ids']:
+            continue
+        
+        app = telegram_apps.get(bot_id)
+        if not app:
+            continue
+        
+        is_healthy = await check_bot_health(app, bot_info)
+        
+        if not is_healthy:
+            logger.warning(f"🚨 Health check FAILED for Bot {bot_info['index'] + 1} (ID: {bot_id})")
+            await perform_failover(bot_id, bot_info['index'])
+
+
 # --- Error Handler ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Extract context info first
@@ -555,6 +727,34 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     if isinstance(update, Update):
         if update.effective_chat: chat_id = update.effective_chat.id
         if update.effective_user: user_id = update.effective_user.id
+    
+    # CRITICAL: Check for token invalidation errors (bot deleted/banned)
+    # This triggers automatic failover to backup tokens
+    if isinstance(context.error, (InvalidToken,)):
+        logger.critical(f"🚨 TOKEN INVALID - Bot may have been deleted or token revoked!")
+        if hasattr(context, 'bot') and context.bot:
+            bot_id = str(context.bot.id)
+            # Find the original bot index
+            bot_info = next((b for b in BOT_TOKENS if b['bot_id'] == bot_id), None)
+            if bot_info:
+                asyncio.create_task(perform_failover(bot_id, bot_info['index']))
+        return
+    
+    # Check for Forbidden errors that might indicate bot was banned
+    if isinstance(context.error, Forbidden):
+        error_str = str(context.error).lower()
+        # These are normal user actions, not bot bans
+        if "bot was blocked by the user" in error_str or "user is deactivated" in error_str:
+            logger.info(f"User {chat_id} blocked the bot or is deactivated - normal")
+        # These might indicate the bot itself was banned
+        elif "bot was kicked" not in error_str and "bot can't initiate" not in error_str:
+            # Check if this is a widespread issue (bot banned) vs user-specific
+            if hasattr(context, 'bot') and context.bot:
+                bot_id = str(context.bot.id)
+                if bot_id not in FAILOVER_STATE['failed_bot_ids']:
+                    logger.warning(f"Suspicious Forbidden error for bot {bot_id}: {context.error}")
+                    # Don't auto-failover on single Forbidden - could be user-specific
+                    # The health check job will catch actual bot bans
     
     # Check for common benign errors FIRST (before logging full traceback)
     if isinstance(context.error, BadRequest):
@@ -1149,6 +1349,10 @@ def main() -> None:
             job_queue.run_repeating(clean_expired_payments_job_wrapper, interval=timedelta(minutes=10), first=timedelta(minutes=1), name="clean_payments")
             job_queue.run_repeating(clean_abandoned_reservations_job_wrapper, interval=timedelta(minutes=3), first=timedelta(minutes=2), name="clean_abandoned")
             job_queue.run_repeating(payment_recovery_job_wrapper, interval=timedelta(minutes=5), first=timedelta(minutes=3), name="payment_recovery")
+            # Bot health check for automatic failover (check every 2 minutes)
+            if BACKUP_TOKENS_MAP:
+                job_queue.run_repeating(bot_health_check_job, interval=timedelta(minutes=2), first=timedelta(seconds=30), name="bot_health_check")
+                logger.info(f"🛡️ Bot health check job enabled (failover configured for {len(BACKUP_TOKENS_MAP)} bot(s))")
             # NOTE: Solana direct wallet checker DISABLED - all payments now go through NOWPayments webhook
             # job_queue.run_repeating(check_solana_deposits_job_wrapper, interval=timedelta(seconds=30), first=timedelta(seconds=5), name="check_solana_deposits")
             logger.info("Background jobs setup complete (NOWPayments webhook mode - Solana checker disabled).")

@@ -129,6 +129,67 @@ for idx, bot_token in enumerate(BOT_TOKENS):
 BOT_TOKENS = VALIDATED_BOT_TOKENS
 logger.info(f"🤖 Multi-bot mode: {len(BOT_TOKENS)} bot(s) configured")
 
+# --- Backup Tokens for Automatic Failover ---
+# Each bot can have its own backup tokens (same bot name, different token)
+# Format: BACKUP_TOKENS_1=token1a,token1b  (backups for Bot 1)
+#         BACKUP_TOKENS_2=token2a,token2b  (backups for Bot 2)
+BACKUP_TOKENS_MAP = {}  # Maps bot index (1-based) to list of backup tokens
+
+for bot_idx in range(1, 11):  # Support up to 10 bots
+    backup_env_key = f"BACKUP_TOKENS_{bot_idx}"
+    backup_str = os.environ.get(backup_env_key, "").strip()
+    
+    if backup_str:
+        validated_backups = []
+        for backup_token in [t.strip() for t in backup_str.split(',') if t.strip()]:
+            if ':' in backup_token:
+                token_parts = backup_token.split(':')
+                if len(token_parts) == 2 and token_parts[0].isdigit() and len(token_parts[1]) >= 30:
+                    validated_backups.append({
+                        'token': backup_token,
+                        'bot_id': token_parts[0],
+                        'original_bot_index': bot_idx - 1  # 0-based index
+                    })
+                else:
+                    logger.warning(f"Invalid backup token format in {backup_env_key}")
+            else:
+                logger.warning(f"Invalid backup token format in {backup_env_key} (missing colon)")
+        
+        if validated_backups:
+            BACKUP_TOKENS_MAP[bot_idx] = validated_backups
+            logger.info(f"🛡️ Bot {bot_idx}: {len(validated_backups)} backup token(s) configured for failover")
+
+# Track failover state per bot
+FAILOVER_STATE = {
+    'failed_bot_ids': set(),  # Bot IDs that have failed
+    'backup_index': {},  # Current backup index per original bot index
+}
+
+def get_next_backup_token(original_bot_index: int) -> dict | None:
+    """Get the next available backup token for a specific bot."""
+    bot_num = original_bot_index + 1  # Convert to 1-based for env var lookup
+    
+    if bot_num not in BACKUP_TOKENS_MAP:
+        logger.warning(f"No backup tokens configured for Bot {bot_num}")
+        return None
+    
+    backups = BACKUP_TOKENS_MAP[bot_num]
+    current_idx = FAILOVER_STATE['backup_index'].get(original_bot_index, 0)
+    
+    if current_idx >= len(backups):
+        logger.critical(f"🚨 All {len(backups)} backup tokens exhausted for Bot {bot_num}!")
+        return None
+    
+    backup = backups[current_idx]
+    FAILOVER_STATE['backup_index'][original_bot_index] = current_idx + 1
+    
+    logger.info(f"🔄 Using backup token {current_idx + 1}/{len(backups)} for Bot {bot_num}")
+    return backup
+
+total_backups = sum(len(v) for v in BACKUP_TOKENS_MAP.values())
+if total_backups > 0:
+    logger.info(f"🛡️ Failover system: {total_backups} total backup token(s) configured across {len(BACKUP_TOKENS_MAP)} bot(s)")
+
 if not WEBHOOK_URL: logger.critical("CRITICAL ERROR: WEBHOOK_URL environment variable is missing."); raise SystemExit("WEBHOOK_URL not set.")
 if not PRIMARY_ADMIN_IDS: logger.warning("No primary admin IDs configured. Primary admin features disabled.")
 # Solana wallet is optional (for legacy direct monitoring if needed)
