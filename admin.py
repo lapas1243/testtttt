@@ -2868,9 +2868,10 @@ def _get_available_cities_from_db():
         if conn: conn.close()
     
     # Also include cities from CITIES dict if not empty
+    # NOTE: CITIES dict has {id: name} structure, so we need .values() for city names
     if CITIES:
-        for city_name in CITIES.keys():
-            if city_name not in cities_list:
+        for city_name in CITIES.values():
+            if city_name and city_name not in cities_list:
                 cities_list.append(city_name)
     
     return sorted(set(cities_list))
