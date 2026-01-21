@@ -629,17 +629,30 @@ async def perform_failover(failed_bot_id: str, original_bot_index: int) -> bool:
             
             logger.warning(f"🔄 FAILOVER: Bot {failed_bot_id} → Backup {backup['bot_id']}")
             
-            # Mark old bot as failed
+            # Mark old bot as failed FIRST (before stopping)
             FAILOVER_STATE['failed_bot_ids'].add(failed_bot_id)
             
-            # Stop the old application if it exists
+            # Stop the old application if it exists - use timeout to avoid hanging
             old_app = telegram_apps.get(failed_bot_id)
             if old_app:
                 try:
-                    await old_app.stop()
-                    await old_app.shutdown()
+                    # Use timeout - if app doesn't stop in 5 seconds, force continue
+                    logger.info(f"Stopping old application for bot {failed_bot_id}...")
+                    await asyncio.wait_for(old_app.stop(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout stopping old bot {failed_bot_id} - continuing anyway")
                 except Exception as e:
                     logger.warning(f"Error stopping old bot {failed_bot_id}: {e}")
+                
+                try:
+                    await asyncio.wait_for(old_app.shutdown(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout shutting down old bot {failed_bot_id} - continuing anyway")
+                except Exception as e:
+                    logger.warning(f"Error shutting down old bot {failed_bot_id}: {e}")
+                
+                # Remove from registries regardless
+                telegram_apps.pop(failed_bot_id, None)
             
             # Create new application with backup token
             defaults = Defaults(parse_mode=None, block=False)
