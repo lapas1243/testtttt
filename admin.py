@@ -530,6 +530,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         [InlineKeyboardButton("💰 Bulk Edit Prices", callback_data="adm_bulk_edit_prices_start")],
         [InlineKeyboardButton("➕ Add New City", callback_data="adm_add_city")],
         [InlineKeyboardButton("📸 Set Bot Media", callback_data="adm_set_media")],
+        [InlineKeyboardButton("📢 Auto Ads System", callback_data="auto_ads_menu")],
         [InlineKeyboardButton("🏠 User Home Menu", callback_data="back_start")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)

@@ -195,14 +195,22 @@ import payment
 from payment import credit_user_balance
 from stock import handle_view_stock
 
-# --- Forwarder Bot Import ---
+# --- Auto Ads System Import ---
 try:
-    from forwarder_bot import TgcfBot
-    from forwarder_config import Config as ForwarderConfig
-    FORWARDER_ENABLED = bool(ForwarderConfig.BOT_TOKEN)
+    from auto_ads import (
+        handle_auto_ads_menu, handle_auto_ads_accounts, handle_auto_ads_add_account,
+        handle_auto_ads_account_detail, handle_auto_ads_del_account,
+        handle_auto_ads_campaigns, handle_auto_ads_campaign_detail,
+        handle_auto_ads_new_campaign, handle_auto_ads_toggle_campaign,
+        handle_auto_ads_del_campaign, handle_auto_ads_run_campaign,
+        handle_auto_ads_stats, handle_auto_ads_message,
+        handle_auto_ads_select_account, handle_auto_ads_schedule,
+        get_bump_service
+    )
+    AUTO_ADS_ENABLED = True
 except ImportError as e:
-    logging.warning(f"Forwarder bot not available: {e}")
-    FORWARDER_ENABLED = False
+    logging.warning(f"Auto Ads system not available: {e}")
+    AUTO_ADS_ENABLED = False
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -412,6 +420,25 @@ def callback_query_router(func):
                 "adm_bulk_price_confirm": admin.handle_adm_bulk_price_confirm,
                 "adm_edit_single_price": admin.handle_adm_edit_single_price,
             }
+            
+            # Auto Ads System handlers (added dynamically if enabled)
+            if AUTO_ADS_ENABLED:
+                KNOWN_HANDLERS.update({
+                    "auto_ads_menu": handle_auto_ads_menu,
+                    "auto_ads_accounts": handle_auto_ads_accounts,
+                    "auto_ads_add_account": handle_auto_ads_add_account,
+                    "auto_ads_account": handle_auto_ads_account_detail,
+                    "auto_ads_del_account": handle_auto_ads_del_account,
+                    "auto_ads_campaigns": handle_auto_ads_campaigns,
+                    "auto_ads_campaign": handle_auto_ads_campaign_detail,
+                    "auto_ads_new_campaign": handle_auto_ads_new_campaign,
+                    "auto_ads_toggle_campaign": handle_auto_ads_toggle_campaign,
+                    "auto_ads_del_campaign": handle_auto_ads_del_campaign,
+                    "auto_ads_run_campaign": handle_auto_ads_run_campaign,
+                    "auto_ads_stats": handle_auto_ads_stats,
+                    "auto_ads_select_account": handle_auto_ads_select_account,
+                    "auto_ads_schedule": handle_auto_ads_schedule,
+                })
 
             target_func = KNOWN_HANDLERS.get(command)
 
@@ -560,6 +587,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error sending ban message to user {user_id}: {e}")
         return
+    
+    # Check for Auto Ads multi-step flows (admin only)
+    if AUTO_ADS_ENABLED:
+        try:
+            if await handle_auto_ads_message(update, context):
+                return  # Message was handled by auto_ads
+        except Exception as e:
+            logger.error(f"Error in auto_ads message handler: {e}")
     
     handler_func = STATE_HANDLERS.get(state)
     if handler_func:
@@ -1417,21 +1452,15 @@ def main() -> None:
         flask_thread.start()
         logger.info(f"Flask server started in a background thread on port {port}.")
         
-        # Start Forwarder/Auto Ads bot if configured
-        if FORWARDER_ENABLED:
-            def run_forwarder():
-                try:
-                    logger.info("📢 Starting Forwarder/Auto Ads bot...")
-                    forwarder = TgcfBot()
-                    forwarder.run()
-                except Exception as e:
-                    logger.error(f"❌ Forwarder bot error: {e}")
-            
-            forwarder_thread = threading.Thread(target=run_forwarder, daemon=True, name="ForwarderBot")
-            forwarder_thread.start()
-            logger.info("📢 Forwarder/Auto Ads bot started in background thread.")
+        # Initialize Auto Ads bump service if enabled
+        if AUTO_ADS_ENABLED:
+            try:
+                bump_service = get_bump_service(applications[0].bot if applications else None)
+                logger.info("📢 Auto Ads System initialized (access via Admin Panel)")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Auto Ads: {e}")
         else:
-            logger.info("📢 Forwarder bot not configured (set FORWARDER_BOT_TOKEN to enable)")
+            logger.info("📢 Auto Ads System available (no additional config needed)")
         
         logger.info("Main thread entering keep-alive loop...")
         
