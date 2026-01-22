@@ -6,9 +6,12 @@ Integrates forwarder/bump service into the main shop bot admin panel
 import logging
 import os
 import base64
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
+from telethon import TelegramClient
+from telethon.sessions import StringSession
 
 from utils import is_primary_admin, send_message_with_retry
 from forwarder_database import Database as ForwarderDatabase
@@ -126,79 +129,7 @@ To add an account, you need:
     )
 
 async def handle_auto_ads_add_account(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Start adding a new Telegram account - choose method"""
-    query = update.callback_query
-    if not is_primary_admin(query.from_user.id):
-        return await query.answer("Access denied.", show_alert=True)
-    
-    await query.answer()
-    
-    text = """➕ **Add New Work Account**
-
-**Choose your setup method:**
-
-**📤 Upload Session File (Recommended)**
-• Fastest setup method
-• Upload .session file directly
-• Account ready immediately
-
-**🔧 Manual Setup**
-• Enter API credentials step-by-step
-• Phone verification required
-• For creating new sessions"""
-    
-    keyboard = [
-        [InlineKeyboardButton("📤 Upload Session File", callback_data="auto_ads_upload_session")],
-        [InlineKeyboardButton("🔧 Manual Setup", callback_data="auto_ads_manual_setup")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_accounts")]
-    ]
-    
-    await query.edit_message_text(
-        text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-async def handle_auto_ads_upload_session(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Start session file upload process"""
-    query = update.callback_query
-    if not is_primary_admin(query.from_user.id):
-        return await query.answer("Access denied.", show_alert=True)
-    
-    await query.answer()
-    user_id = query.from_user.id
-    
-    _user_sessions[user_id] = {
-        'step': 'upload_session',
-        'data': {}
-    }
-    
-    text = """📤 **Upload Session File**
-
-Send me your Telegram session file (.session) as a document.
-
-**Requirements:**
-• File must have .session extension
-• File size should be less than 50KB
-• Session must be valid and active
-
-**How to get a session file:**
-1. Use Telethon to create a session on your PC
-2. The .session file is created in your script directory
-3. Upload that file here
-
-Send the session file now:"""
-    
-    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_accounts")]]
-    
-    await query.edit_message_text(
-        text,
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-async def handle_auto_ads_manual_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Start manual account setup"""
+    """Start adding a new Telegram account"""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id):
         return await query.answer("Access denied.", show_alert=True)
@@ -211,9 +142,9 @@ async def handle_auto_ads_manual_setup(update: Update, context: ContextTypes.DEF
         'data': {}
     }
     
-    text = """🔧 **Manual Account Setup**
+    text = """➕ **Add New Work Account**
 
-**Step 1/5: Account Name**
+**Step 1/4: Account Name**
 
 Enter a friendly name for this account (e.g., "Main Account", "Worker 1"):"""
     
@@ -224,6 +155,15 @@ Enter a friendly name for this account (e.g., "Main Account", "Worker 1"):"""
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
+# Keep these for backwards compatibility but they redirect to main flow
+async def handle_auto_ads_upload_session(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Redirect to main add account flow"""
+    return await handle_auto_ads_add_account(update, context, params)
+
+async def handle_auto_ads_manual_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Redirect to main add account flow"""
+    return await handle_auto_ads_add_account(update, context, params)
 
 async def handle_auto_ads_account_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
     """Show account details"""
@@ -551,73 +491,206 @@ async def handle_auto_ads_message(update: Update, context: ContextTypes.DEFAULT_
     db = get_forwarder_db()
     bump_service = get_bump_service()
     
-    # Account creation flow
+    # Account creation flow - Step 1: Account Name
     if step == 'account_name':
         session['data']['account_name'] = text
         session['step'] = 'phone_number'
         
         await update.message.reply_text(
-            "**Step 2/5: Phone Number**\n\nEnter the phone number with country code (e.g., +37061234567):",
+            "**Step 2/4: Phone Number**\n\nEnter the phone number with country code (e.g., +37061234567):",
             parse_mode=ParseMode.MARKDOWN
         )
         return True
     
+    # Step 2: Phone Number
     elif step == 'phone_number':
         session['data']['phone_number'] = text
         session['step'] = 'api_id'
         
         await update.message.reply_text(
-            "**Step 3/5: API ID**\n\nEnter your API ID from my.telegram.org:",
+            "**Step 3/4: API ID**\n\nEnter your API ID from my.telegram.org:",
             parse_mode=ParseMode.MARKDOWN
         )
         return True
     
+    # Step 3: API ID
     elif step == 'api_id':
         session['data']['api_id'] = text
         session['step'] = 'api_hash'
         
         await update.message.reply_text(
-            "**Step 4/5: API Hash**\n\nEnter your API Hash from my.telegram.org:",
+            "**Step 4/4: API Hash**\n\nEnter your API Hash from my.telegram.org:",
             parse_mode=ParseMode.MARKDOWN
         )
         return True
     
+    # Step 4: API Hash - then send verification code
     elif step == 'api_hash':
         session['data']['api_hash'] = text
-        session['step'] = 'session_string'
-        
-        await update.message.reply_text(
-            "**Step 5/5: Session String**\n\nPaste your Telethon session string.\n\n(Generate using Telethon's StringSession)",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return True
-    
-    elif step == 'session_string':
         data = session['data']
         
+        await update.message.reply_text(
+            "⏳ **Connecting to Telegram...**\n\nSending verification code to your phone...",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
         try:
-            db.add_telegram_account(
+            # Create Telethon client and send code
+            client = TelegramClient(
+                StringSession(),
+                int(data['api_id']),
+                data['api_hash']
+            )
+            
+            await client.connect()
+            
+            # Send verification code
+            sent_code = await client.send_code_request(data['phone_number'])
+            
+            # Store client and phone_code_hash for verification
+            session['client'] = client
+            session['phone_code_hash'] = sent_code.phone_code_hash
+            session['step'] = 'verification_code'
+            
+            await update.message.reply_text(
+                f"📱 **Verification Code Sent!**\n\n"
+                f"A code has been sent to **{data['phone_number']}**\n\n"
+                f"Please enter the verification code:",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to send verification code: {e}")
+            del _user_sessions[user_id]
+            
+            await update.message.reply_text(
+                f"❌ **Failed to Connect**\n\n"
+                f"Error: {str(e)}\n\n"
+                f"Please check your API ID and API Hash and try again.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        
+        return True
+    
+    # Step 5: Verification Code
+    elif step == 'verification_code':
+        code = text.strip().replace(" ", "").replace("-", "")
+        client = session.get('client')
+        data = session['data']
+        
+        if not client:
+            del _user_sessions[user_id]
+            await update.message.reply_text("❌ Session expired. Please start over.")
+            return True
+        
+        try:
+            # Sign in with the code
+            await client.sign_in(
+                data['phone_number'],
+                code,
+                phone_code_hash=session['phone_code_hash']
+            )
+            
+            # Get session string
+            session_string = client.session.save()
+            
+            # Save account to database
+            account_id = db.add_telegram_account(
                 user_id=user_id,
                 account_name=data['account_name'],
                 phone_number=data['phone_number'],
                 api_id=data['api_id'],
                 api_hash=data['api_hash'],
-                session_string=text
+                session_string=session_string
             )
             
+            # Cleanup
+            await client.disconnect()
             del _user_sessions[user_id]
             
             keyboard = [[InlineKeyboardButton("👥 View Accounts", callback_data="auto_ads_accounts")]]
             
             await update.message.reply_text(
-                f"✅ **Account Added Successfully!**\n\n**{data['account_name']}** is now ready to use.",
+                f"✅ **Account Added Successfully!**\n\n"
+                f"**Name:** {data['account_name']}\n"
+                f"**Phone:** {data['phone_number']}\n\n"
+                f"The account is ready to use for campaigns!",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
+            
         except Exception as e:
-            logger.error(f"Error adding account: {e}")
+            error_str = str(e).lower()
+            logger.error(f"Failed to verify code: {e}")
+            
+            # Check if 2FA is needed
+            if "two-step" in error_str or "password" in error_str or "2fa" in error_str or "srp" in error_str:
+                session['step'] = '2fa_password'
+                await update.message.reply_text(
+                    "🔐 **Two-Factor Authentication Required**\n\n"
+                    "Your account has 2FA enabled.\n\n"
+                    "Please enter your 2FA password:",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ **Verification Failed**\n\n"
+                    f"Error: {str(e)}\n\n"
+                    f"Please check the code and try again.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+        
+        return True
+    
+    # Step 6 (if needed): 2FA Password
+    elif step == '2fa_password':
+        password = text
+        client = session.get('client')
+        data = session['data']
+        
+        if not client:
+            del _user_sessions[user_id]
+            await update.message.reply_text("❌ Session expired. Please start over.")
+            return True
+        
+        try:
+            # Sign in with 2FA password
+            await client.sign_in(password=password)
+            
+            # Get session string
+            session_string = client.session.save()
+            
+            # Save account to database
+            account_id = db.add_telegram_account(
+                user_id=user_id,
+                account_name=data['account_name'],
+                phone_number=data['phone_number'],
+                api_id=data['api_id'],
+                api_hash=data['api_hash'],
+                session_string=session_string
+            )
+            
+            # Cleanup
+            await client.disconnect()
+            del _user_sessions[user_id]
+            
+            keyboard = [[InlineKeyboardButton("👥 View Accounts", callback_data="auto_ads_accounts")]]
+            
             await update.message.reply_text(
-                f"❌ **Error adding account:**\n{str(e)}",
+                f"✅ **Account Added Successfully!**\n\n"
+                f"**Name:** {data['account_name']}\n"
+                f"**Phone:** {data['phone_number']}\n\n"
+                f"The account is ready to use for campaigns!",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to verify 2FA: {e}")
+            await update.message.reply_text(
+                f"❌ **2FA Authentication Failed**\n\n"
+                f"Error: {str(e)}\n\n"
+                f"Please check your password and try again.",
                 parse_mode=ParseMode.MARKDOWN
             )
         
@@ -769,86 +842,9 @@ Your campaign is ready. Use "Run Now" to start."""
         )
 
 # ============================================================================
-# DOCUMENT HANDLER (for session file upload)
+# DOCUMENT HANDLER (placeholder - not used in simplified flow)
 # ============================================================================
 
 async def handle_auto_ads_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Handle document uploads for auto ads (session files). Returns True if handled."""
-    user_id = update.effective_user.id
-    
-    if not is_primary_admin(user_id):
-        return False
-    
-    if user_id not in _user_sessions:
-        return False
-    
-    session = _user_sessions[user_id]
-    step = session.get('step')
-    
-    if step != 'upload_session':
-        return False
-    
-    document = update.message.document
-    if not document:
-        return False
-    
-    # Check if it's a session file
-    file_name = document.file_name or ""
-    if not file_name.endswith('.session'):
-        await update.message.reply_text(
-            "❌ **Invalid file!**\n\nPlease upload a .session file.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return True
-    
-    # Check file size (max 50KB)
-    if document.file_size > 50 * 1024:
-        await update.message.reply_text(
-            "❌ **File too large!**\n\nSession files should be less than 50KB.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return True
-    
-    try:
-        # Download the file
-        file = await context.bot.get_file(document.file_id)
-        file_bytes = await file.download_as_bytearray()
-        
-        # Encode session data as base64 for storage
-        session_data = base64.b64encode(bytes(file_bytes)).decode('utf-8')
-        
-        # Extract account name from filename
-        account_name = file_name.replace('.session', '')
-        
-        # Save to database
-        db = get_forwarder_db()
-        account_id = db.add_telegram_account(
-            user_id=user_id,
-            account_name=account_name,
-            phone_number="(from session file)",
-            api_id="0",
-            api_hash="(from session file)",
-            session_string=session_data
-        )
-        
-        del _user_sessions[user_id]
-        
-        keyboard = [[InlineKeyboardButton("👥 View Accounts", callback_data="auto_ads_accounts")]]
-        
-        await update.message.reply_text(
-            f"✅ **Session Uploaded Successfully!**\n\n"
-            f"**Account:** {account_name}\n"
-            f"**ID:** {account_id}\n\n"
-            f"The account is ready to use for campaigns!",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        
-    except Exception as e:
-        logger.error(f"Error uploading session: {e}")
-        await update.message.reply_text(
-            f"❌ **Error uploading session:**\n{str(e)}",
-            parse_mode=ParseMode.MARKDOWN
-        )
-    
-    return True
+    """Document handler placeholder. Returns False (not handled)."""
+    return False
