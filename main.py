@@ -1498,7 +1498,8 @@ def main() -> None:
         return None, None, False
 
     async def setup_webhooks_and_run():
-        nonlocal applications, telegram_apps
+        nonlocal applications
+        global telegram_apps
         
         working_applications = []
         
