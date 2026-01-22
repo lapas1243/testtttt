@@ -195,6 +195,15 @@ import payment
 from payment import credit_user_balance
 from stock import handle_view_stock
 
+# --- Forwarder Bot Import ---
+try:
+    from forwarder_bot import TgcfBot
+    from forwarder_config import Config as ForwarderConfig
+    FORWARDER_ENABLED = bool(ForwarderConfig.BOT_TOKEN)
+except ImportError as e:
+    logging.warning(f"Forwarder bot not available: {e}")
+    FORWARDER_ENABLED = False
+
 # --- Logging Setup ---
 logging.basicConfig(
     level=logging.INFO,
@@ -1407,6 +1416,23 @@ def main() -> None:
         flask_thread = threading.Thread(target=lambda: flask_app.run(host='0.0.0.0', port=port, debug=False), daemon=True)
         flask_thread.start()
         logger.info(f"Flask server started in a background thread on port {port}.")
+        
+        # Start Forwarder/Auto Ads bot if configured
+        if FORWARDER_ENABLED:
+            def run_forwarder():
+                try:
+                    logger.info("📢 Starting Forwarder/Auto Ads bot...")
+                    forwarder = TgcfBot()
+                    forwarder.run()
+                except Exception as e:
+                    logger.error(f"❌ Forwarder bot error: {e}")
+            
+            forwarder_thread = threading.Thread(target=run_forwarder, daemon=True, name="ForwarderBot")
+            forwarder_thread.start()
+            logger.info("📢 Forwarder/Auto Ads bot started in background thread.")
+        else:
+            logger.info("📢 Forwarder bot not configured (set FORWARDER_BOT_TOKEN to enable)")
+        
         logger.info("Main thread entering keep-alive loop...")
         
         signals = (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)
