@@ -4,6 +4,8 @@ Integrates forwarder/bump service into the main shop bot admin panel
 """
 
 import logging
+import os
+import base64
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
@@ -124,7 +126,79 @@ To add an account, you need:
     )
 
 async def handle_auto_ads_add_account(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Start adding a new Telegram account"""
+    """Start adding a new Telegram account - choose method"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    await query.answer()
+    
+    text = """➕ **Add New Work Account**
+
+**Choose your setup method:**
+
+**📤 Upload Session File (Recommended)**
+• Fastest setup method
+• Upload .session file directly
+• Account ready immediately
+
+**🔧 Manual Setup**
+• Enter API credentials step-by-step
+• Phone verification required
+• For creating new sessions"""
+    
+    keyboard = [
+        [InlineKeyboardButton("📤 Upload Session File", callback_data="auto_ads_upload_session")],
+        [InlineKeyboardButton("🔧 Manual Setup", callback_data="auto_ads_manual_setup")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_accounts")]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def handle_auto_ads_upload_session(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Start session file upload process"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    await query.answer()
+    user_id = query.from_user.id
+    
+    _user_sessions[user_id] = {
+        'step': 'upload_session',
+        'data': {}
+    }
+    
+    text = """📤 **Upload Session File**
+
+Send me your Telegram session file (.session) as a document.
+
+**Requirements:**
+• File must have .session extension
+• File size should be less than 50KB
+• Session must be valid and active
+
+**How to get a session file:**
+1. Use Telethon to create a session on your PC
+2. The .session file is created in your script directory
+3. Upload that file here
+
+Send the session file now:"""
+    
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_accounts")]]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def handle_auto_ads_manual_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Start manual account setup"""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id):
         return await query.answer("Access denied.", show_alert=True)
@@ -137,7 +211,7 @@ async def handle_auto_ads_add_account(update: Update, context: ContextTypes.DEFA
         'data': {}
     }
     
-    text = """➕ **Add Telegram Account**
+    text = """🔧 **Manual Account Setup**
 
 **Step 1/5: Account Name**
 
@@ -693,3 +767,88 @@ Your campaign is ready. Use "Run Now" to start."""
             f"❌ **Error creating campaign:**\n{str(e)}",
             parse_mode=ParseMode.MARKDOWN
         )
+
+# ============================================================================
+# DOCUMENT HANDLER (for session file upload)
+# ============================================================================
+
+async def handle_auto_ads_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Handle document uploads for auto ads (session files). Returns True if handled."""
+    user_id = update.effective_user.id
+    
+    if not is_primary_admin(user_id):
+        return False
+    
+    if user_id not in _user_sessions:
+        return False
+    
+    session = _user_sessions[user_id]
+    step = session.get('step')
+    
+    if step != 'upload_session':
+        return False
+    
+    document = update.message.document
+    if not document:
+        return False
+    
+    # Check if it's a session file
+    file_name = document.file_name or ""
+    if not file_name.endswith('.session'):
+        await update.message.reply_text(
+            "❌ **Invalid file!**\n\nPlease upload a .session file.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return True
+    
+    # Check file size (max 50KB)
+    if document.file_size > 50 * 1024:
+        await update.message.reply_text(
+            "❌ **File too large!**\n\nSession files should be less than 50KB.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return True
+    
+    try:
+        # Download the file
+        file = await context.bot.get_file(document.file_id)
+        file_bytes = await file.download_as_bytearray()
+        
+        # Encode session data as base64 for storage
+        session_data = base64.b64encode(bytes(file_bytes)).decode('utf-8')
+        
+        # Extract account name from filename
+        account_name = file_name.replace('.session', '')
+        
+        # Save to database
+        db = get_forwarder_db()
+        account_id = db.add_telegram_account(
+            user_id=user_id,
+            account_name=account_name,
+            phone_number="(from session file)",
+            api_id="0",
+            api_hash="(from session file)",
+            session_string=session_data
+        )
+        
+        del _user_sessions[user_id]
+        
+        keyboard = [[InlineKeyboardButton("👥 View Accounts", callback_data="auto_ads_accounts")]]
+        
+        await update.message.reply_text(
+            f"✅ **Session Uploaded Successfully!**\n\n"
+            f"**Account:** {account_name}\n"
+            f"**ID:** {account_id}\n\n"
+            f"The account is ready to use for campaigns!",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error uploading session: {e}")
+        await update.message.reply_text(
+            f"❌ **Error uploading session:**\n{str(e)}",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    
+    return True

@@ -205,6 +205,8 @@ try:
         handle_auto_ads_del_campaign, handle_auto_ads_run_campaign,
         handle_auto_ads_stats, handle_auto_ads_message,
         handle_auto_ads_select_account, handle_auto_ads_schedule,
+        handle_auto_ads_upload_session, handle_auto_ads_manual_setup,
+        handle_auto_ads_document,
         get_bump_service
     )
     AUTO_ADS_ENABLED = True
@@ -427,6 +429,8 @@ def callback_query_router(func):
                     "auto_ads_menu": handle_auto_ads_menu,
                     "auto_ads_accounts": handle_auto_ads_accounts,
                     "auto_ads_add_account": handle_auto_ads_add_account,
+                    "auto_ads_upload_session": handle_auto_ads_upload_session,
+                    "auto_ads_manual_setup": handle_auto_ads_manual_setup,
                     "auto_ads_account": handle_auto_ads_account_detail,
                     "auto_ads_del_account": handle_auto_ads_del_account,
                     "auto_ads_campaigns": handle_auto_ads_campaigns,
@@ -591,10 +595,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check for Auto Ads multi-step flows (admin only)
     if AUTO_ADS_ENABLED:
         try:
+            # Check for document uploads (session files)
+            if update.message and update.message.document:
+                if await handle_auto_ads_document(update, context):
+                    return  # Document was handled by auto_ads
+            # Check for text messages
             if await handle_auto_ads_message(update, context):
                 return  # Message was handled by auto_ads
         except Exception as e:
-            logger.error(f"Error in auto_ads message handler: {e}")
+            logger.error(f"Error in auto_ads handler: {e}")
     
     handler_func = STATE_HANDLERS.get(state)
     if handler_func:
