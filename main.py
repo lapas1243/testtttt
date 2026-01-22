@@ -1422,28 +1422,112 @@ def main() -> None:
     else:
         logger.warning("BASKET_TIMEOUT is not positive or no apps. Skipping background job setup.")
 
-    async def setup_webhooks_and_run():
-        nonlocal applications
+    async def try_start_bot_with_failover(idx: int, application, bot_token: str, bot_index: int) -> tuple:
+        """Try to start a bot, with automatic failover to backup tokens if primary fails."""
+        current_app = application
+        current_token = bot_token
+        attempts = 0
+        max_attempts = 10  # Max backup tokens to try
         
-        # Initialize and set up webhooks for ALL bots
+        while attempts < max_attempts:
+            try:
+                # Test if token is valid
+                me = await current_app.bot.get_me()
+                bot_id = me.id
+                bot_username = me.username
+                logger.info(f"🤖 Initializing Bot {idx + 1}: @{bot_username} (ID: {bot_id})...")
+                
+                await current_app.initialize()
+                
+                webhook_url = f"{WEBHOOK_URL}/telegram/{current_app.bot.token}"
+                logger.info(f"Setting webhook for @{bot_username}: {WEBHOOK_URL}/telegram/***")
+                
+                if await current_app.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES):
+                    logger.info(f"✅ Webhook set successfully for @{bot_username}")
+                else:
+                    logger.error(f"❌ Failed to set webhook for @{bot_username}")
+                    raise Exception("Webhook setup failed")
+                
+                await current_app.start()
+                logger.info(f"✅ @{bot_username} started (webhook mode)")
+                
+                return current_app, str(bot_id), True
+                
+            except (InvalidToken, Unauthorized) as e:
+                logger.warning(f"⚠️ Bot {idx + 1} token invalid: {e}")
+                
+                # Try to get a backup token
+                backup = get_next_backup_token(bot_index)
+                if backup:
+                    logger.info(f"🔄 Trying backup token for Bot {idx + 1}...")
+                    current_token = backup['token']
+                    
+                    # Create new application with backup token
+                    persistence = PicklePersistence(filepath=f"bot_persistence_{backup['bot_id']}.pickle")
+                    job_queue = JobQueue() if bot_index == 0 else None
+                    
+                    app_builder = ApplicationBuilder().token(current_token).defaults(defaults).persistence(persistence)
+                    if job_queue:
+                        app_builder.job_queue(job_queue)
+                    app_builder.post_init(post_init)
+                    app_builder.post_shutdown(post_shutdown)
+                    
+                    current_app = app_builder.build()
+                    
+                    # Add handlers
+                    current_app.add_handler(CommandHandler("start", start_command_wrapper))
+                    current_app.add_handler(CommandHandler("admin", admin_command_wrapper))
+                    current_app.add_handler(CallbackQueryHandler(handle_callback_query))
+                    current_app.add_handler(MessageHandler(
+                        (filters.TEXT & ~filters.COMMAND) | filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.Document.ALL,
+                        handle_message
+                    ))
+                    current_app.add_error_handler(error_handler)
+                    
+                    attempts += 1
+                    logger.info(f"🔄 Startup failover attempt {attempts} for Bot {idx + 1}")
+                else:
+                    logger.critical(f"🚨 No more backup tokens for Bot {idx + 1}! All tokens exhausted.")
+                    return None, None, False
+            
+            except Exception as e:
+                logger.error(f"❌ Unexpected error starting Bot {idx + 1}: {e}")
+                return None, None, False
+        
+        logger.critical(f"🚨 Max failover attempts reached for Bot {idx + 1}")
+        return None, None, False
+
+    async def setup_webhooks_and_run():
+        nonlocal applications, telegram_apps
+        
+        working_applications = []
+        
+        # Initialize and set up webhooks for ALL bots with failover support
         for idx, application in enumerate(applications):
-            bot_id = (await application.bot.get_me()).id
-            bot_username = (await application.bot.get_me()).username
-            logger.info(f"🤖 Initializing Bot {idx + 1}: @{bot_username} (ID: {bot_id})...")
+            bot_info = BOT_TOKENS[idx] if idx < len(BOT_TOKENS) else None
+            bot_token = bot_info['token'] if bot_info else None
+            bot_index = bot_info['index'] if bot_info else idx
             
-            await application.initialize()
+            result_app, result_bot_id, success = await try_start_bot_with_failover(
+                idx, application, bot_token, bot_index
+            )
             
-            webhook_url = f"{WEBHOOK_URL}/telegram/{application.bot.token}"
-            logger.info(f"Setting webhook for @{bot_username}: {WEBHOOK_URL}/telegram/***")
-            
-            if await application.bot.set_webhook(url=webhook_url, allowed_updates=Update.ALL_TYPES):
-                logger.info(f"✅ Webhook set successfully for @{bot_username}")
+            if success and result_app:
+                working_applications.append(result_app)
+                telegram_apps[result_bot_id] = result_app
+                
+                # Register bot in shared registry
+                from utils import register_bot
+                register_bot(result_bot_id, result_app.bot)
             else:
-                logger.error(f"❌ Failed to set webhook for @{bot_username}")
-                return
-            
-            await application.start()
-            logger.info(f"✅ @{bot_username} started (webhook mode)")
+                logger.error(f"❌ Bot {idx + 1} failed to start (no valid tokens)")
+        
+        if not working_applications:
+            logger.critical("🚨 No bots could be started! Check your tokens.")
+            return
+        
+        applications = working_applications
+        logger.info(f"🚀 {len(applications)} bot(s) initialized and running!")
         
         logger.info(f"🚀 All {len(applications)} bot(s) initialized and running!")
         
