@@ -208,6 +208,11 @@ try:
         handle_auto_ads_upload_session, handle_auto_ads_manual_setup,
         handle_auto_ads_buttons_yes, handle_auto_ads_buttons_no,
         handle_auto_ads_document,
+        # Group selection handlers
+        handle_auto_ads_fetch_groups, handle_auto_ads_group_page,
+        handle_auto_ads_toggle_group, handle_auto_ads_select_all_groups,
+        handle_auto_ads_clear_groups, handle_auto_ads_confirm_groups,
+        handle_auto_ads_all_groups, handle_auto_ads_manual_targets,
         get_bump_service
     )
     AUTO_ADS_ENABLED = True
@@ -445,6 +450,15 @@ def callback_query_router(func):
                     "auto_ads_schedule": handle_auto_ads_schedule,
                     "auto_ads_buttons_yes": handle_auto_ads_buttons_yes,
                     "auto_ads_buttons_no": handle_auto_ads_buttons_no,
+                    # Group selection handlers
+                    "auto_ads_fetch_groups": handle_auto_ads_fetch_groups,
+                    "auto_ads_group_page": handle_auto_ads_group_page,
+                    "auto_ads_toggle_group": handle_auto_ads_toggle_group,
+                    "auto_ads_select_all_groups": handle_auto_ads_select_all_groups,
+                    "auto_ads_clear_groups": handle_auto_ads_clear_groups,
+                    "auto_ads_confirm_groups": handle_auto_ads_confirm_groups,
+                    "auto_ads_all_groups": handle_auto_ads_all_groups,
+                    "auto_ads_manual_targets": handle_auto_ads_manual_targets,
                 })
 
             target_func = KNOWN_HANDLERS.get(command)

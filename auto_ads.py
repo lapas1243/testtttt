@@ -918,7 +918,7 @@ Send your buttons:"""
     )
 
 async def handle_auto_ads_buttons_no(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """User doesn't want buttons, go to targets"""
+    """User doesn't want buttons, go to target selection"""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id):
         return await query.answer("Access denied.", show_alert=True)
@@ -930,9 +930,362 @@ async def handle_auto_ads_buttons_no(update: Update, context: ContextTypes.DEFAU
         return await query.answer("Session expired", show_alert=True)
     
     _user_sessions[user_id]['data']['buttons'] = []
+    _user_sessions[user_id]['step'] = 'target_selection_method'
+    
+    text = """📍 **Step 5/6: Target Chats**
+
+How would you like to select target groups?
+
+• **Select Groups** - Choose from groups the account is in
+• **All Groups** - Send to all groups the account is in
+• **Enter Manually** - Type usernames/IDs manually"""
+    
+    keyboard = [
+        [InlineKeyboardButton("📋 Select Groups", callback_data="auto_ads_fetch_groups")],
+        [InlineKeyboardButton("📤 Send to All Groups", callback_data="auto_ads_all_groups")],
+        [InlineKeyboardButton("✍️ Enter Manually", callback_data="auto_ads_manual_targets")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def handle_auto_ads_fetch_groups(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Fetch groups from userbot account for selection"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    user_id = query.from_user.id
+    
+    if user_id not in _user_sessions:
+        return await query.answer("Session expired", show_alert=True)
+    
+    await query.answer("⏳ Fetching groups...")
+    
+    # Show loading message
+    await query.edit_message_text(
+        "⏳ **Fetching groups from account...**\n\nThis may take a moment.",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    session = _user_sessions[user_id]
+    account_id = session['data'].get('account_id')
+    
+    db = get_forwarder_db()
+    account = db.get_account(account_id)
+    
+    if not account or not account.get('session_string'):
+        await query.edit_message_text(
+            "❌ **Account session not found!**\n\nPlease re-add the account.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    try:
+        # Connect to Telegram and fetch groups
+        client = TelegramClient(
+            StringSession(account['session_string']),
+            account['api_id'],
+            account['api_hash']
+        )
+        
+        await client.connect()
+        
+        if not await client.is_user_authorized():
+            await client.disconnect()
+            await query.edit_message_text(
+                "❌ **Session expired!**\n\nPlease re-authenticate the account.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        # Get all dialogs (groups/channels)
+        dialogs = await client.get_dialogs()
+        groups = []
+        
+        for dialog in dialogs:
+            if dialog.is_group or dialog.is_channel:
+                # Get proper chat ID format
+                entity = dialog.entity
+                chat_id = entity.id
+                if hasattr(entity, 'megagroup') or hasattr(entity, 'broadcast'):
+                    chat_id = f"-100{entity.id}"
+                
+                groups.append({
+                    'id': str(chat_id),
+                    'name': dialog.name or f"Chat {chat_id}",
+                    'type': 'channel' if getattr(entity, 'broadcast', False) else 'group',
+                    'members': getattr(entity, 'participants_count', 0) or 0
+                })
+        
+        await client.disconnect()
+        
+        if not groups:
+            await query.edit_message_text(
+                "⚠️ **No groups found!**\n\nThe account isn't a member of any groups or channels.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✍️ Enter Manually", callback_data="auto_ads_manual_targets")],
+                    [InlineKeyboardButton("🔙 Back", callback_data="auto_ads_buttons_no")]
+                ])
+            )
+            return
+        
+        # Store groups in session for selection
+        _user_sessions[user_id]['data']['available_groups'] = groups
+        _user_sessions[user_id]['data']['selected_groups'] = []
+        _user_sessions[user_id]['step'] = 'group_selection'
+        
+        # Build group selection keyboard
+        await _show_group_selection(query, user_id)
+        
+    except Exception as e:
+        logger.error(f"Error fetching groups: {e}")
+        await query.edit_message_text(
+            f"❌ **Error fetching groups:**\n`{str(e)[:200]}`",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✍️ Enter Manually", callback_data="auto_ads_manual_targets")],
+                [InlineKeyboardButton("🔙 Back", callback_data="auto_ads_buttons_no")]
+            ])
+        )
+
+async def _show_group_selection(query, user_id, page=0):
+    """Show group selection UI with pagination"""
+    session = _user_sessions[user_id]
+    groups = session['data'].get('available_groups', [])
+    selected = set(session['data'].get('selected_groups', []))
+    
+    GROUPS_PER_PAGE = 8
+    total_pages = (len(groups) + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE
+    start_idx = page * GROUPS_PER_PAGE
+    end_idx = min(start_idx + GROUPS_PER_PAGE, len(groups))
+    
+    text = f"""📋 **Select Target Groups** (Page {page + 1}/{total_pages})
+
+Found **{len(groups)}** groups/channels.
+Selected: **{len(selected)}**
+
+Tap to select/deselect:"""
+    
+    keyboard = []
+    
+    # Group buttons
+    for i in range(start_idx, end_idx):
+        group = groups[i]
+        is_selected = group['id'] in selected
+        icon = "✅" if is_selected else "⬜"
+        type_icon = "📢" if group['type'] == 'channel' else "👥"
+        name = group['name'][:25] + "..." if len(group['name']) > 25 else group['name']
+        
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{icon} {type_icon} {name}",
+                callback_data=f"auto_ads_toggle_group|{group['id']}|{page}"
+            )
+        ])
+    
+    # Pagination buttons
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"auto_ads_group_page|{page-1}"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"auto_ads_group_page|{page+1}"))
+    if nav_row:
+        keyboard.append(nav_row)
+    
+    # Selection actions
+    keyboard.append([
+        InlineKeyboardButton("☑️ Select All", callback_data="auto_ads_select_all_groups"),
+        InlineKeyboardButton("⬜ Clear All", callback_data="auto_ads_clear_groups")
+    ])
+    
+    # Confirm/Cancel
+    keyboard.append([
+        InlineKeyboardButton(f"✅ Confirm ({len(selected)} groups)", callback_data="auto_ads_confirm_groups")
+    ])
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")])
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def handle_auto_ads_group_page(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Handle group selection pagination"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    await query.answer()
+    user_id = query.from_user.id
+    
+    if user_id not in _user_sessions:
+        return await query.answer("Session expired", show_alert=True)
+    
+    page = int(params[0]) if params else 0
+    await _show_group_selection(query, user_id, page)
+
+async def handle_auto_ads_toggle_group(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Toggle group selection"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    user_id = query.from_user.id
+    
+    if user_id not in _user_sessions:
+        return await query.answer("Session expired", show_alert=True)
+    
+    group_id = params[0] if params else None
+    page = int(params[1]) if len(params) > 1 else 0
+    
+    if not group_id:
+        return await query.answer("Invalid group", show_alert=True)
+    
+    selected = _user_sessions[user_id]['data'].get('selected_groups', [])
+    
+    if group_id in selected:
+        selected.remove(group_id)
+        await query.answer("❌ Deselected")
+    else:
+        selected.append(group_id)
+        await query.answer("✅ Selected")
+    
+    _user_sessions[user_id]['data']['selected_groups'] = selected
+    await _show_group_selection(query, user_id, page)
+
+async def handle_auto_ads_select_all_groups(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Select all groups"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    user_id = query.from_user.id
+    
+    if user_id not in _user_sessions:
+        return await query.answer("Session expired", show_alert=True)
+    
+    groups = _user_sessions[user_id]['data'].get('available_groups', [])
+    _user_sessions[user_id]['data']['selected_groups'] = [g['id'] for g in groups]
+    
+    await query.answer(f"✅ Selected all {len(groups)} groups")
+    await _show_group_selection(query, user_id, 0)
+
+async def handle_auto_ads_clear_groups(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Clear all group selections"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    user_id = query.from_user.id
+    
+    if user_id not in _user_sessions:
+        return await query.answer("Session expired", show_alert=True)
+    
+    _user_sessions[user_id]['data']['selected_groups'] = []
+    
+    await query.answer("⬜ Cleared all selections")
+    await _show_group_selection(query, user_id, 0)
+
+async def handle_auto_ads_confirm_groups(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Confirm selected groups and proceed to schedule"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    user_id = query.from_user.id
+    
+    if user_id not in _user_sessions:
+        return await query.answer("Session expired", show_alert=True)
+    
+    selected = _user_sessions[user_id]['data'].get('selected_groups', [])
+    
+    if not selected:
+        return await query.answer("⚠️ Select at least one group!", show_alert=True)
+    
+    await query.answer()
+    
+    # Store targets and proceed to schedule
+    _user_sessions[user_id]['data']['target_chats'] = selected
+    _user_sessions[user_id]['data']['target_mode'] = 'selected'
+    _user_sessions[user_id]['step'] = 'schedule'
+    
+    text = f"""⏰ **Step 6/6: Schedule**
+
+Selected **{len(selected)}** target groups.
+
+Choose how often to run this campaign:"""
+    
+    keyboard = [
+        [InlineKeyboardButton("🔄 Continuous", callback_data="auto_ads_schedule|continuous")],
+        [InlineKeyboardButton("📅 Daily", callback_data="auto_ads_schedule|daily")],
+        [InlineKeyboardButton("🎯 Manual Only", callback_data="auto_ads_schedule|manual")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def handle_auto_ads_all_groups(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Select all groups (without fetching list)"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    await query.answer()
+    user_id = query.from_user.id
+    
+    if user_id not in _user_sessions:
+        return await query.answer("Session expired", show_alert=True)
+    
+    # Store special flag for all groups
+    _user_sessions[user_id]['data']['target_chats'] = ['ALL_WORKER_GROUPS']
+    _user_sessions[user_id]['data']['target_mode'] = 'all_groups'
+    _user_sessions[user_id]['step'] = 'schedule'
+    
+    text = """⏰ **Step 6/6: Schedule**
+
+📤 **Sending to ALL groups** the account is in.
+
+Choose how often to run this campaign:"""
+    
+    keyboard = [
+        [InlineKeyboardButton("🔄 Continuous", callback_data="auto_ads_schedule|continuous")],
+        [InlineKeyboardButton("📅 Daily", callback_data="auto_ads_schedule|daily")],
+        [InlineKeyboardButton("🎯 Manual Only", callback_data="auto_ads_schedule|manual")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def handle_auto_ads_manual_targets(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Switch to manual target input"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    await query.answer()
+    user_id = query.from_user.id
+    
+    if user_id not in _user_sessions:
+        return await query.answer("Session expired", show_alert=True)
+    
     _user_sessions[user_id]['step'] = 'target_chats'
     
-    text = """**Step 5/6: Target Chats**
+    text = """✍️ **Step 5/6: Manual Target Entry**
 
 Enter target group/channel usernames or IDs.
 One per line:
@@ -943,7 +1296,10 @@ One per line:
 
 Send your targets:"""
     
-    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]]
+    keyboard = [
+        [InlineKeyboardButton("🔙 Back to Options", callback_data="auto_ads_buttons_no")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
+    ]
     
     await query.edit_message_text(
         text,
@@ -971,22 +1327,37 @@ async def handle_auto_ads_schedule(update: Update, context: ContextTypes.DEFAULT
     
     try:
         import json
-        campaign_id = bump_service.create_campaign(
+        
+        # Get target mode (defaults to 'specific' for manual entries)
+        target_mode = data.get('target_mode', 'specific')
+        
+        # Get buttons if any
+        buttons = data.get('buttons', [])
+        
+        campaign_id = bump_service.add_campaign(
             user_id=user_id,
             account_id=data['account_id'],
             campaign_name=data['campaign_name'],
-            ad_content=json.dumps(data['ad_content']),
-            target_chats=json.dumps(data['target_chats']),
+            ad_content=data['ad_content'],
+            target_chats=data['target_chats'],
             schedule_type=schedule_type,
-            schedule_time=None
+            schedule_time=None,
+            buttons=buttons,
+            target_mode=target_mode
         )
         
         del _user_sessions[user_id]
         
+        # Show target info based on mode
+        if target_mode == 'all_groups':
+            target_info = "📤 All account groups"
+        else:
+            target_info = f"📍 {len(data['target_chats'])} targets"
+        
         text = f"""✅ **Campaign Created!**
 
 **{data['campaign_name']}**
-📍 {len(data['target_chats'])} targets
+{target_info}
 ⏰ Schedule: {schedule_type}
 
 Your campaign is ready. Use "Run Now" to start."""
