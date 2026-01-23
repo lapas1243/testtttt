@@ -2041,39 +2041,84 @@ class BumpService:
                         if message_data.get('type') == 'linked_message':
                             
                             try:
-                                # PERFECT SOLUTION: Forward the message directly from storage (already has buttons!)
-                                logger.info(f"🚀 HUMAN-LIKE: Forwarding to {chat_entity.title} ({idx}/{len(target_entities)})")
+                                # GET STORAGE MESSAGE AND SEND WITH BUTTONS (forwarding can't have buttons!)
+                                logger.info(f"🚀 SENDING to {chat_entity.title} ({idx}/{len(target_entities)})")
                                 
                                 # 🎭 QUICK SIMULATION: Minimal human behavior (just read receipts, no typing)
                                 if random.random() < 0.3:  # 30% chance
                                     await self._simulate_read_receipts(client, account_id, chat_entity)
                                 
-                                # Forward the message directly - this preserves EVERYTHING!
-                                sent_msg = await client.forward_messages(
-                                    entity=chat_entity,
-                                    messages=storage_message_id,
-                                    from_peer=storage_channel_entity
-                                )
+                                # Get the original message from storage channel
+                                storage_msg = await client.get_messages(storage_channel_entity, ids=storage_message_id)
+                                
+                                if not storage_msg:
+                                    logger.error(f"❌ Could not fetch storage message {storage_message_id}")
+                                    failed_count += 1
+                                    continue
+                                
+                                # Create inline keyboard buttons for Telethon
+                                inline_buttons = None
+                                if buttons and len(buttons) > 0:
+                                    try:
+                                        from telethon.tl.types import KeyboardButtonUrl
+                                        from telethon.tl.types import ReplyInlineMarkup, KeyboardButtonRow
+                                        
+                                        button_rows = []
+                                        for btn in buttons:
+                                            if btn.get('text') and btn.get('url'):
+                                                url = btn['url']
+                                                # Ensure URL has protocol
+                                                if not url.startswith('http://') and not url.startswith('https://'):
+                                                    url = 'https://' + url
+                                                button_rows.append(KeyboardButtonRow(
+                                                    buttons=[KeyboardButtonUrl(text=btn['text'], url=url)]
+                                                ))
+                                        
+                                        if button_rows:
+                                            inline_buttons = ReplyInlineMarkup(rows=button_rows)
+                                            logger.info(f"🔘 Created {len(button_rows)} inline button(s)")
+                                    except Exception as btn_err:
+                                        logger.warning(f"⚠️ Could not create inline buttons: {btn_err}")
+                                
+                                # Send as new message (not forward) to allow buttons
+                                sent_msg = None
+                                if storage_msg.media:
+                                    # Has media - send with media and buttons
+                                    sent_msg = await client.send_file(
+                                        chat_entity,
+                                        storage_msg.media,
+                                        caption=storage_msg.message or '',
+                                        buttons=inline_buttons
+                                    )
+                                    logger.info(f"📸 Sent media with buttons to {chat_entity.title}")
+                                else:
+                                    # Text only - send with buttons
+                                    sent_msg = await client.send_message(
+                                        chat_entity,
+                                        storage_msg.message or '',
+                                        buttons=inline_buttons
+                                    )
+                                    logger.info(f"💬 Sent text with buttons to {chat_entity.title}")
                                 
                                 if sent_msg:
-                                    logger.info(f"✅ Forwarded to {chat_entity.title} ({idx}/{len(target_entities)})")
+                                    logger.info(f"✅ Sent to {chat_entity.title} ({idx}/{len(target_entities)})")
                                     # Increment counters
                                     sent_count += 1
                                     buttons_sent_count += 1
                                     # Log performance
-                                    self.log_ad_performance(campaign_id, campaign['user_id'], str(chat_entity.id), sent_msg[0].id if isinstance(sent_msg, list) else sent_msg.id)
+                                    msg_id = sent_msg[0].id if isinstance(sent_msg, list) else sent_msg.id
+                                    self.log_ad_performance(campaign_id, campaign['user_id'], str(chat_entity.id), msg_id)
                                     
                                     # 🛡️ ANTI-BAN: Record message sent
                                     self._record_message_sent(account_id)
                                     
-                                    # HUMAN-LIKE: Very short delay between forwards (0.5-2 seconds)
-                                    # This mimics how fast a human can forward to multiple chats
+                                    # HUMAN-LIKE: Very short delay between sends (0.5-2 seconds)
                                     quick_delay = random.uniform(0.5, 2.0)
                                     await asyncio.sleep(quick_delay)
                                     
                                     continue  # Move to next group
                                 else:
-                                    logger.error(f"❌ YOLO: Failed to forward message {storage_message_id}")
+                                    logger.error(f"❌ Failed to send message to {chat_entity.title}")
                                     failed_count += 1
                                     continue
                                 
