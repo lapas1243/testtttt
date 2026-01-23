@@ -2041,12 +2041,10 @@ class BumpService:
                         if message_data.get('type') == 'linked_message':
                             
                             try:
-                                # GET STORAGE MESSAGE AND SEND WITH BUTTONS (forwarding can't have buttons!)
+                                # ═══════════════════════════════════════════════════════════════
+                                # EXACT COPY FROM ORIGINAL FORWARDER bot.py - PROVEN TO WORK!
+                                # ═══════════════════════════════════════════════════════════════
                                 logger.info(f"🚀 SENDING to {chat_entity.title} ({idx}/{len(target_entities)})")
-                                
-                                # 🎭 QUICK SIMULATION: Minimal human behavior (just read receipts, no typing)
-                                if random.random() < 0.3:  # 30% chance
-                                    await self._simulate_read_receipts(client, account_id, chat_entity)
                                 
                                 # Get the original message from storage channel
                                 storage_msg = await client.get_messages(storage_channel_entity, ids=storage_message_id)
@@ -2056,89 +2054,95 @@ class BumpService:
                                     failed_count += 1
                                     continue
                                 
-                                # Create inline URL buttons using Button.url() - THE CORRECT WAY!
+                                # Create buttons EXACTLY like original forwarder does
+                                # from telethon import Button (already imported at top)
                                 telethon_buttons = None
                                 if buttons and len(buttons) > 0:
                                     try:
                                         button_rows = []
-                                        for btn in buttons:
-                                            if btn.get('text') and btn.get('url'):
+                                        current_row = []
+                                        
+                                        for i, btn in enumerate(buttons):
+                                            if btn.get('url'):
                                                 url = btn['url']
-                                                # Ensure URL has protocol
                                                 if not url.startswith('http://') and not url.startswith('https://'):
                                                     url = 'https://' + url
-                                                # Use Button.url() - this is how forwarder_bot does it!
-                                                button_rows.append([Button.url(btn['text'], url)])
-                                                logger.info(f"🔘 Created button: {btn['text']} -> {url}")
+                                                telethon_button = Button.url(btn['text'], url)
+                                            else:
+                                                telethon_button = Button.inline(btn['text'], f"btn_{i}")
+                                            
+                                            current_row.append(telethon_button)
+                                            
+                                            # 2 buttons per row, or end of list
+                                            if len(current_row) == 2 or i == len(buttons) - 1:
+                                                button_rows.append(current_row)
+                                                current_row = []
                                         
-                                        if button_rows:
-                                            telethon_buttons = button_rows
-                                            logger.info(f"🔘 Created {len(button_rows)} inline URL button(s)")
-                                    except Exception as btn_err:
-                                        logger.error(f"❌ Could not create buttons: {btn_err}")
+                                        telethon_buttons = button_rows
+                                        logger.info(f"✅ Created {len(buttons)} buttons in {len(button_rows)} rows")
+                                    except Exception as e:
+                                        logger.error(f"❌ Error creating buttons: {e}")
                                         telethon_buttons = None
                                 
-                                # Send as new message (not forward) WITH BUTTONS
+                                # SEND MESSAGE - EXACTLY LIKE ORIGINAL FORWARDER
                                 sent_msg = None
+                                message_text = storage_msg.message or ''
+                                
                                 try:
                                     if storage_msg.media:
-                                        # Has media - send with media and buttons
+                                        # Has media - use send_file with buttons
                                         sent_msg = await client.send_file(
                                             chat_entity,
                                             storage_msg.media,
-                                            caption=storage_msg.message or '',
+                                            caption=message_text,
                                             buttons=telethon_buttons
                                         )
-                                        logger.info(f"📸 Sent media with {len(telethon_buttons) if telethon_buttons else 0} buttons to {chat_entity.title}")
+                                        logger.info(f"✅ Sent media with buttons to {chat_entity.title}")
                                     else:
-                                        # Text only - send with buttons
+                                        # Text only - use send_message with buttons
                                         sent_msg = await client.send_message(
                                             chat_entity,
-                                            storage_msg.message or '',
+                                            message_text,
                                             buttons=telethon_buttons
                                         )
-                                        logger.info(f"💬 Sent text with {len(telethon_buttons) if telethon_buttons else 0} buttons to {chat_entity.title}")
-                                except Exception as send_err:
-                                    # If buttons fail, try sending without buttons but with URL in text
-                                    logger.warning(f"⚠️ Send with buttons failed: {send_err}, trying with text URL")
-                                    try:
-                                        text_with_url = storage_msg.message or ''
-                                        if buttons:
-                                            for btn in buttons:
-                                                if btn.get('text') and btn.get('url'):
-                                                    text_with_url += f"\n\n🔗 {btn['text']}: {btn['url']}"
+                                        logger.info(f"✅ Sent text with buttons to {chat_entity.title}")
                                         
+                                except Exception as button_error:
+                                    # FALLBACK: If inline buttons fail, add URLs as text (like original forwarder)
+                                    logger.warning(f"⚠️ Buttons failed for {chat_entity.title}: {button_error}")
+                                    button_text = ""
+                                    if telethon_buttons:
+                                        for button_row in telethon_buttons:
+                                            for button in button_row:
+                                                if hasattr(button, 'url'):
+                                                    button_text += f"\n🔗 {button.text}: {button.url}"
+                                    
+                                    final_message = message_text + button_text
+                                    try:
                                         if storage_msg.media:
                                             sent_msg = await client.send_file(
                                                 chat_entity,
                                                 storage_msg.media,
-                                                caption=text_with_url
+                                                caption=final_message
                                             )
                                         else:
-                                            sent_msg = await client.send_message(chat_entity, text_with_url)
-                                        logger.info(f"✅ Sent with URL in text to {chat_entity.title}")
-                                    except Exception as fallback_err:
-                                        logger.error(f"❌ All send methods failed: {fallback_err}")
+                                            sent_msg = await client.send_message(chat_entity, final_message)
+                                        logger.info(f"✅ Sent with text buttons to {chat_entity.title}")
+                                    except Exception as fallback_error:
+                                        logger.error(f"❌ Failed to send to {chat_entity.title}: {fallback_error}")
                                 
                                 if sent_msg:
-                                    logger.info(f"✅ Sent to {chat_entity.title} ({idx}/{len(target_entities)})")
-                                    # Increment counters
                                     sent_count += 1
                                     buttons_sent_count += 1
-                                    # Log performance
                                     msg_id = sent_msg[0].id if isinstance(sent_msg, list) else sent_msg.id
                                     self.log_ad_performance(campaign_id, campaign['user_id'], str(chat_entity.id), msg_id)
-                                    
-                                    # 🛡️ ANTI-BAN: Record message sent
                                     self._record_message_sent(account_id)
                                     
-                                    # HUMAN-LIKE: Very short delay between sends (0.5-2 seconds)
+                                    # Short delay between sends
                                     quick_delay = random.uniform(0.5, 2.0)
                                     await asyncio.sleep(quick_delay)
-                                    
-                                    continue  # Move to next group
+                                    continue
                                 else:
-                                    logger.error(f"❌ Failed to send message to {chat_entity.title}")
                                     failed_count += 1
                                     continue
                                 
