@@ -835,25 +835,129 @@ async def handle_auto_ads_message(update: Update, context: ContextTypes.DEFAULT_
         session['step'] = 'schedule'
         
         keyboard = [
-            [InlineKeyboardButton("🔄 Continuous (every ~30min)", callback_data="auto_ads_schedule|continuous")],
-            [InlineKeyboardButton("📅 Daily (once per day)", callback_data="auto_ads_schedule|daily")],
-            [InlineKeyboardButton("🎯 Manual Only (Run Now button)", callback_data="auto_ads_schedule|manual")],
+            [InlineKeyboardButton("📅 Daily", callback_data="auto_ads_schedule|daily")],
+            [InlineKeyboardButton("📊 Weekly", callback_data="auto_ads_schedule|weekly")],
+            [InlineKeyboardButton("⏰ Hourly", callback_data="auto_ads_schedule|hourly")],
+            [InlineKeyboardButton("🔧 Custom", callback_data="auto_ads_schedule|custom")],
             [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
         ]
         
         await update.message.reply_text(
             f"✅ **{len(targets)} target(s) set!**\n\n"
-            f"⏰ **Step 6/6: Schedule**\n\n"
-            f"How often should ads be sent?\n\n"
-            f"• **Continuous** - Auto-sends every ~30 min with anti-ban delays\n"
-            f"• **Daily** - Sends once per day\n"
-            f"• **Manual** - Only runs when you click 'Run Now'",
+            f"⏰ **Step 6/6: Schedule Type**\n\n"
+            f"**How often should this campaign run?**\n\n"
+            f"**📅 Daily** - Once per day at a specific time\n"
+            f"**📊 Weekly** - Once per week on a chosen day\n"
+            f"**⏰ Hourly** - Every hour automatically\n"
+            f"**🔧 Custom** - Set your own interval (e.g., every 4 hours)",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return True
     
+    elif step == 'schedule_time':
+        # User entered the schedule time/interval
+        schedule_time = text.strip()
+        schedule_type = session['data'].get('schedule_type', 'daily')
+        
+        # Validate input based on schedule type
+        if schedule_type == 'daily':
+            # Expect HH:MM format
+            import re
+            if not re.match(r'^\d{1,2}:\d{2}$', schedule_time):
+                await update.message.reply_text(
+                    "❌ **Invalid time format!**\n\n"
+                    "Please use **HH:MM** format (24-hour).\n"
+                    "Example: `14:30`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return True
+        elif schedule_type == 'weekly':
+            # Expect "Day HH:MM" format
+            if not any(day.lower() in schedule_time.lower() for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
+                await update.message.reply_text(
+                    "❌ **Invalid format!**\n\n"
+                    "Please use **Day HH:MM** format.\n"
+                    "Example: `Monday 14:30`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return True
+        elif schedule_type == 'custom':
+            # Expect interval like "30 minutes" or "2 hours"
+            if 'minute' not in schedule_time.lower() and 'hour' not in schedule_time.lower():
+                await update.message.reply_text(
+                    "❌ **Invalid interval!**\n\n"
+                    "Please specify minutes or hours.\n"
+                    "Examples: `30 minutes`, `2 hours`",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return True
+        
+        session['data']['schedule_time'] = schedule_time
+        
+        # Save the campaign
+        await _save_campaign_from_message(update, user_id, session)
+        return True
+    
     return False
+
+async def _save_campaign_from_message(update: Update, user_id: int, session: dict):
+    """Save campaign to database (called from message handler)"""
+    data = session['data']
+    bump_service = get_bump_service()
+    
+    try:
+        target_mode = data.get('target_mode', 'specific')
+        buttons = data.get('buttons', [])
+        
+        campaign_id = bump_service.add_campaign(
+            user_id=user_id,
+            account_id=data['account_id'],
+            campaign_name=data['campaign_name'],
+            ad_content=data['ad_content'],
+            target_chats=data['target_chats'],
+            schedule_type=data.get('schedule_type', 'hourly'),
+            schedule_time=data.get('schedule_time'),
+            buttons=buttons,
+            target_mode=target_mode
+        )
+        
+        del _user_sessions[user_id]
+        
+        if target_mode == 'all_groups':
+            target_info = "📤 All account groups"
+        else:
+            target_info = f"📍 {len(data['target_chats'])} targets"
+        
+        schedule_display = data.get('schedule_type', 'hourly')
+        if data.get('schedule_time'):
+            schedule_display += f" ({data['schedule_time']})"
+        
+        text = f"""✅ **Campaign Created!**
+
+**{data['campaign_name']}**
+{target_info}
+⏰ Schedule: {schedule_display}
+
+Your campaign is ready. Use "Run Now" to start."""
+        
+        keyboard = [
+            [InlineKeyboardButton("🚀 Run Now", callback_data=f"auto_ads_run_campaign|{campaign_id}")],
+            [InlineKeyboardButton("📢 View Campaigns", callback_data="auto_ads_campaigns")]
+        ]
+        
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating campaign: {e}")
+        await update.message.reply_text(
+            f"❌ **Error creating campaign:**\n{str(e)}",
+            parse_mode=ParseMode.MARKDOWN
+        )
 
 async def handle_auto_ads_select_account(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
     """Handle account selection in campaign creation"""
@@ -1235,20 +1339,22 @@ async def handle_auto_ads_confirm_groups(update: Update, context: ContextTypes.D
     _user_sessions[user_id]['data']['target_mode'] = 'selected'
     _user_sessions[user_id]['step'] = 'schedule'
     
-    text = f"""⏰ **Step 6/6: Schedule**
+    text = f"""⏰ **Step 6/6: Schedule Type**
 
 Selected **{len(selected)}** target groups.
 
-How often should ads be sent?
+**How often should this campaign run?**
 
-• **Continuous** - Auto-sends every ~30 min with anti-ban delays
-• **Daily** - Sends once per day
-• **Manual** - Only runs when you click 'Run Now'"""
+**📅 Daily** - Once per day at a specific time
+**📊 Weekly** - Once per week on a chosen day
+**⏰ Hourly** - Every hour automatically
+**🔧 Custom** - Set your own interval (e.g., every 4 hours)"""
     
     keyboard = [
-        [InlineKeyboardButton("🔄 Continuous (every ~30min)", callback_data="auto_ads_schedule|continuous")],
-        [InlineKeyboardButton("📅 Daily (once per day)", callback_data="auto_ads_schedule|daily")],
-        [InlineKeyboardButton("🎯 Manual Only (Run Now button)", callback_data="auto_ads_schedule|manual")],
+        [InlineKeyboardButton("📅 Daily", callback_data="auto_ads_schedule|daily")],
+        [InlineKeyboardButton("📊 Weekly", callback_data="auto_ads_schedule|weekly")],
+        [InlineKeyboardButton("⏰ Hourly", callback_data="auto_ads_schedule|hourly")],
+        [InlineKeyboardButton("🔧 Custom", callback_data="auto_ads_schedule|custom")],
         [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
     ]
     
@@ -1275,20 +1381,22 @@ async def handle_auto_ads_all_groups(update: Update, context: ContextTypes.DEFAU
     _user_sessions[user_id]['data']['target_mode'] = 'all_groups'
     _user_sessions[user_id]['step'] = 'schedule'
     
-    text = """⏰ **Step 6/6: Schedule**
+    text = """⏰ **Step 6/6: Schedule Type**
 
 📤 **Sending to ALL groups** the account is in.
 
-How often should ads be sent?
+**How often should this campaign run?**
 
-• **Continuous** - Auto-sends every ~30 min with anti-ban delays
-• **Daily** - Sends once per day
-• **Manual** - Only runs when you click 'Run Now'"""
+**📅 Daily** - Once per day at a specific time
+**📊 Weekly** - Once per week on a chosen day
+**⏰ Hourly** - Every hour automatically
+**🔧 Custom** - Set your own interval (e.g., every 4 hours)"""
     
     keyboard = [
-        [InlineKeyboardButton("🔄 Continuous (every ~30min)", callback_data="auto_ads_schedule|continuous")],
-        [InlineKeyboardButton("📅 Daily (once per day)", callback_data="auto_ads_schedule|daily")],
-        [InlineKeyboardButton("🎯 Manual Only (Run Now button)", callback_data="auto_ads_schedule|manual")],
+        [InlineKeyboardButton("📅 Daily", callback_data="auto_ads_schedule|daily")],
+        [InlineKeyboardButton("📊 Weekly", callback_data="auto_ads_schedule|weekly")],
+        [InlineKeyboardButton("⏰ Hourly", callback_data="auto_ads_schedule|hourly")],
+        [InlineKeyboardButton("🔧 Custom", callback_data="auto_ads_schedule|custom")],
         [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
     ]
     
@@ -1335,7 +1443,7 @@ Send your targets:"""
     )
 
 async def handle_auto_ads_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Handle schedule selection and save campaign"""
+    """Handle schedule selection - may ask for time or save campaign directly"""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id):
         return await query.answer("Access denied.", show_alert=True)
@@ -1346,15 +1454,65 @@ async def handle_auto_ads_schedule(update: Update, context: ContextTypes.DEFAULT
     if user_id not in _user_sessions:
         return await query.answer("Session expired", show_alert=True)
     
-    schedule_type = params[0] if params else 'manual'
+    schedule_type = params[0] if params else 'hourly'
     session = _user_sessions[user_id]
-    data = session['data']
     
+    # Store schedule type and ask for time if needed
+    session['data']['schedule_type'] = schedule_type
+    
+    if schedule_type == 'daily':
+        session['step'] = 'schedule_time'
+        text = """✅ **Daily schedule selected!**
+
+**Enter the time when ads should be posted daily.**
+
+**Format:** HH:MM (24-hour format)
+**Example:** 14:30 (for 2:30 PM)"""
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]]
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+        
+    elif schedule_type == 'weekly':
+        session['step'] = 'schedule_time'
+        text = """✅ **Weekly schedule selected!**
+
+**Enter the day and time when ads should be posted weekly.**
+
+**Format:** Day HH:MM
+**Example:** Monday 14:30"""
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]]
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+        
+    elif schedule_type == 'custom':
+        session['step'] = 'schedule_time'
+        text = """✅ **Custom schedule selected!**
+
+**Enter your custom interval.**
+
+**Examples:**
+• `30 minutes` - Every 30 minutes
+• `2 hours` - Every 2 hours
+• `4 hours` - Every 4 hours"""
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]]
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+    
+    # For 'hourly' - proceed directly without asking for time
+    session['data']['schedule_time'] = 'every hour'
+    
+    # Save the campaign
+    await _save_campaign(query, user_id, session)
+
+async def _save_campaign(query, user_id: int, session: dict):
+    """Save campaign to database"""
+    data = session['data']
     bump_service = get_bump_service()
     
     try:
-        import json
-        
         # Get target mode (defaults to 'specific' for manual entries)
         target_mode = data.get('target_mode', 'specific')
         
@@ -1367,8 +1525,8 @@ async def handle_auto_ads_schedule(update: Update, context: ContextTypes.DEFAULT
             campaign_name=data['campaign_name'],
             ad_content=data['ad_content'],
             target_chats=data['target_chats'],
-            schedule_type=schedule_type,
-            schedule_time=None,
+            schedule_type=data.get('schedule_type', 'hourly'),
+            schedule_time=data.get('schedule_time'),
             buttons=buttons,
             target_mode=target_mode
         )
@@ -1381,11 +1539,15 @@ async def handle_auto_ads_schedule(update: Update, context: ContextTypes.DEFAULT
         else:
             target_info = f"📍 {len(data['target_chats'])} targets"
         
+        schedule_display = data.get('schedule_type', 'hourly')
+        if data.get('schedule_time'):
+            schedule_display += f" ({data['schedule_time']})"
+        
         text = f"""✅ **Campaign Created!**
 
 **{data['campaign_name']}**
 {target_info}
-⏰ Schedule: {schedule_type}
+⏰ Schedule: {schedule_display}
 
 Your campaign is ready. Use "Run Now" to start."""
         
