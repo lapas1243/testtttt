@@ -1996,345 +1996,156 @@ class BumpService:
         flood_retry_queue = []  # Groups that need retry after flood wait
         
         logger.info(f"📤 SENDING: About to send campaign {campaign_id} to {len(target_entities)} target groups")
-        logger.info(f"🚀 HUMAN-LIKE FORWARDING: Forwarding to all groups at once (like selecting multiple chats)")
+        logger.info(f"🚀 HUMAN-LIKE FORWARDING: Sending to all groups")
         
-        # Extract message data once (before loop)
-        storage_chat_id = None
-        storage_message_id = None
-        storage_channel_entity = None
-        
-        if isinstance(ad_content, list) and ad_content:
-            for message_data in ad_content:
-                if message_data.get('type') == 'linked_message':
-                    storage_chat_id = int(message_data.get('storage_chat_id'))
-                    storage_message_id = int(message_data.get('storage_message_id'))
-                    logger.info(f"📋 Message to forward: ID {storage_message_id} from channel {storage_chat_id}")
-                    break
-        
-        # Get storage channel entity once
-        if storage_chat_id:
+        # ═══════════════════════════════════════════════════════════════════════════
+        # EXACT COPY FROM ORIGINAL FORWARDER - CREATE BUTTONS FIRST
+        # ═══════════════════════════════════════════════════════════════════════════
+        telethon_buttons = None
+        if buttons and len(buttons) > 0:
             try:
-                storage_channel_entity = await client.get_entity(storage_chat_id)
-                logger.info(f"✅ Storage channel ready: {storage_channel_entity.title if hasattr(storage_channel_entity, 'title') else 'Unknown'}")
-            except Exception as entity_error:
-                logger.error(f"❌ Failed to get storage channel entity: {entity_error}")
-                storage_channel_entity = storage_channel
+                button_rows = []
+                current_row = []
+                
+                for i, btn in enumerate(buttons):
+                    if btn.get('url'):
+                        url = btn['url']
+                        if not url.startswith('http://') and not url.startswith('https://'):
+                            url = 'https://' + url
+                        telethon_button = Button.url(btn['text'], url)
+                    else:
+                        telethon_button = Button.inline(btn['text'], f"btn_{i}")
+                    
+                    current_row.append(telethon_button)
+                    
+                    if len(current_row) == 2 or i == len(buttons) - 1:
+                        button_rows.append(current_row)
+                        current_row = []
+                
+                telethon_buttons = button_rows
+                logger.info(f"✅ Created {len(buttons)} buttons in {len(button_rows)} rows")
+            except Exception as e:
+                logger.error(f"❌ Error creating buttons: {e}")
+                telethon_buttons = [[Button.url("Shop Now", "https://t.me/testukassdfdds")]]
         else:
-            storage_channel_entity = storage_channel
+            telethon_buttons = [[Button.url("Shop Now", "https://t.me/testukassdfdds")]]
+            logger.info("Using default Shop Now button")
         
-        if not storage_channel_entity or not storage_message_id:
-            logger.error(f"❌ Cannot forward: Missing storage channel or message ID")
-            return
-        
-        # Forward to ALL groups quickly (like human selecting multiple chats)
+        # ═══════════════════════════════════════════════════════════════════════════
+        # EXACT COPY FROM ORIGINAL FORWARDER bot.py - SEND MESSAGES
+        # ═══════════════════════════════════════════════════════════════════════════
         for idx, chat_entity in enumerate(target_entities, 1):
             message = None
             try:
-                # YOLO MODE FIX: Handle different content types including linked messages
-                if isinstance(ad_content, list) and ad_content:
-                    logger.info(f"🔥 YOLO MODE: Processing {len(ad_content)} ad content items for {chat_entity.title}")
+                logger.info(f"🚀 Sending to {chat_entity.title} ({idx}/{len(target_entities)})")
+                
+                # Check if ad_content is bridge channel format (like original forwarder)
+                if isinstance(ad_content, dict) and ad_content.get('bridge_channel'):
+                    # ORIGINAL FORWARDER FORMAT - bridge channel
+                    bridge_channel_entity = ad_content.get('bridge_channel_entity')
+                    bridge_message_id = ad_content.get('bridge_message_id')
                     
-                    # Process linked messages (the actual format we're getting)
-                    for message_data in ad_content:
-                        logger.info(f"🔍 YOLO DEBUG: Processing message_data: {message_data}")
+                    logger.info(f"🔗 Bridge channel: {bridge_channel_entity}, Message ID: {bridge_message_id}")
+                    
+                    try:
+                        # Get bridge channel entity
+                        bridge_entity = await client.get_entity(bridge_channel_entity)
+                        logger.info(f"✅ Bridge channel resolved: {getattr(bridge_entity, 'title', bridge_channel_entity)}")
                         
-                        if message_data.get('type') == 'linked_message':
-                            
-                            try:
-                                # ═══════════════════════════════════════════════════════════════
-                                # EXACT COPY FROM ORIGINAL FORWARDER bot.py - PROVEN TO WORK!
-                                # ═══════════════════════════════════════════════════════════════
-                                logger.info(f"🚀 SENDING to {chat_entity.title} ({idx}/{len(target_entities)})")
-                                
-                                # Get the original message from storage channel
-                                storage_msg = await client.get_messages(storage_channel_entity, ids=storage_message_id)
-                                
-                                if not storage_msg:
-                                    logger.error(f"❌ Could not fetch storage message {storage_message_id}")
-                                    failed_count += 1
-                                    continue
-                                
-                                # Create buttons EXACTLY like original forwarder does
-                                # from telethon import Button (already imported at top)
-                                telethon_buttons = None
-                                if buttons and len(buttons) > 0:
-                                    try:
-                                        button_rows = []
-                                        current_row = []
-                                        
-                                        for i, btn in enumerate(buttons):
-                                            if btn.get('url'):
-                                                url = btn['url']
-                                                if not url.startswith('http://') and not url.startswith('https://'):
-                                                    url = 'https://' + url
-                                                telethon_button = Button.url(btn['text'], url)
-                                            else:
-                                                telethon_button = Button.inline(btn['text'], f"btn_{i}")
-                                            
-                                            current_row.append(telethon_button)
-                                            
-                                            # 2 buttons per row, or end of list
-                                            if len(current_row) == 2 or i == len(buttons) - 1:
-                                                button_rows.append(current_row)
-                                                current_row = []
-                                        
-                                        telethon_buttons = button_rows
-                                        logger.info(f"✅ Created {len(buttons)} buttons in {len(button_rows)} rows")
-                                    except Exception as e:
-                                        logger.error(f"❌ Error creating buttons: {e}")
-                                        telethon_buttons = None
-                                
-                                # SEND MESSAGE - EXACTLY LIKE ORIGINAL FORWARDER
-                                sent_msg = None
-                                message_text = storage_msg.message or ''
-                                
-                                try:
-                                    if storage_msg.media:
-                                        # Has media - use send_file with buttons
-                                        sent_msg = await client.send_file(
-                                            chat_entity,
-                                            storage_msg.media,
-                                            caption=message_text,
-                                            buttons=telethon_buttons
-                                        )
-                                        logger.info(f"✅ Sent media with buttons to {chat_entity.title}")
-                                    else:
-                                        # Text only - use send_message with buttons
-                                        sent_msg = await client.send_message(
-                                            chat_entity,
-                                            message_text,
-                                            buttons=telethon_buttons
-                                        )
-                                        logger.info(f"✅ Sent text with buttons to {chat_entity.title}")
-                                        
-                                except Exception as button_error:
-                                    # FALLBACK: If inline buttons fail, add URLs as text (like original forwarder)
-                                    logger.warning(f"⚠️ Buttons failed for {chat_entity.title}: {button_error}")
-                                    button_text = ""
-                                    if telethon_buttons:
-                                        for button_row in telethon_buttons:
-                                            for button in button_row:
-                                                if hasattr(button, 'url'):
-                                                    button_text += f"\n🔗 {button.text}: {button.url}"
-                                    
-                                    final_message = message_text + button_text
-                                    try:
-                                        if storage_msg.media:
-                                            sent_msg = await client.send_file(
-                                                chat_entity,
-                                                storage_msg.media,
-                                                caption=final_message
-                                            )
-                                        else:
-                                            sent_msg = await client.send_message(chat_entity, final_message)
-                                        logger.info(f"✅ Sent with text buttons to {chat_entity.title}")
-                                    except Exception as fallback_error:
-                                        logger.error(f"❌ Failed to send to {chat_entity.title}: {fallback_error}")
-                                
-                                if sent_msg:
-                                    sent_count += 1
-                                    buttons_sent_count += 1
-                                    msg_id = sent_msg[0].id if isinstance(sent_msg, list) else sent_msg.id
-                                    self.log_ad_performance(campaign_id, campaign['user_id'], str(chat_entity.id), msg_id)
-                                    self._record_message_sent(account_id)
-                                    
-                                    # Short delay between sends
-                                    quick_delay = random.uniform(0.5, 2.0)
-                                    await asyncio.sleep(quick_delay)
-                                    continue
-                                else:
-                                    failed_count += 1
-                                    continue
-                                
-                            except FloodWaitError as flood_error:
-                                # Handle Telegram rate limiting - DON'T wait, skip this account
-                                wait_seconds = flood_error.seconds
-                                wait_minutes = wait_seconds // 60
-                                logger.error(f"🚨 FLOOD WAIT: Account hit rate limit at '{chat_entity.title}'")
-                                logger.error(f"⏰ Telegram wants us to wait: {wait_minutes} minutes {wait_seconds % 60} seconds")
-                                logger.warning(f"⚠️ This account sent messages TOO FAST!")
-                                logger.info(f"📊 Progress before FloodWait: {sent_count}/{len(target_entities)} sent")
-                                
-                                # Mark account as temporarily restricted
-                                self._record_flood_wait(account_id, wait_seconds)
-                                
-                                # Add remaining groups (including current) to retry queue for next run
-                                remaining_groups = target_entities[idx:]
-                                flood_retry_queue.extend(remaining_groups)
-                                logger.warning(f"📋 Added {len(remaining_groups)} groups to retry queue for next campaign run")
-                                
-                                # STOP this campaign immediately - don't wait!
-                                logger.error(f"❌ STOPPING CAMPAIGN: This account needs to rest")
-                                logger.error(f"💡 Other accounts will continue. This account will retry in {wait_minutes} minutes")
-                                logger.error(f"💡 Consider increasing MIN_DELAY_BETWEEN_MESSAGES to avoid FloodWait")
-                                
-                                # Break out of sending loop - campaign stops here
-                                break
-                            except errors.PeerFloodError:
-                                logger.error(f"🚨 PEER FLOOD ERROR at '{chat_entity.title}'")
-                                self._handle_peer_flood(account_id, account.get('account_name', 'Unknown'))
-                                failed_count += 1
-                                break  # Stop campaign immediately - this is a serious warning
-                            except errors.UserBannedInChannelError:
-                                logger.warning(f"⚠️ Account banned in channel '{chat_entity.title}' - Skipping")
-                                failed_count += 1
-                                continue  # Skip this group, continue with others
-                            except errors.ChatWriteForbiddenError:
-                                logger.error(f"🚫 WRITE FORBIDDEN in '{chat_entity.title}' - Account may be shadow banned!")
-                                logger.error(f"💡 Account: {account.get('account_name')} may need 48-72h rest")
-                                failed_count += 1
-                                # Don't break - try other groups, but this is a warning sign
-                                continue
-                            except errors.ChatRestrictedError as restrict_err:
-                                logger.error(f"🚫 CHAT RESTRICTED: '{chat_entity.title}' - {restrict_err}")
-                                failed_count += 1
-                                continue
-                            except errors.SlowModeWaitError as slow_err:
-                                logger.warning(f"🐌 SLOW MODE: '{chat_entity.title}' - wait {slow_err.seconds}s")
-                                # Wait and retry this group
-                                await asyncio.sleep(slow_err.seconds + 2)
-                                flood_retry_queue.append(chat_entity)
-                                continue
-                            except Exception as linked_error:
-                                logger.error(f"❌ YOLO MODE: Failed to send to {chat_entity.title}: {type(linked_error).__name__}: {linked_error}")
-                                failed_count += 1
-                                # Brief pause before trying next group
-                                await asyncio.sleep(random.uniform(1, 3))
-                                continue  # Try next group
-                    
-                    # OLD LOGIC: Find the main media message and combine all text content (keeping as fallback)
-                    media_message = None
-                    combined_text = ""
-                    
-                    for message_data in ad_content:
-                        if message_data.get('media_type') and not media_message:
-                            # Use the first media message as the main one
-                            media_message = message_data
-                        elif message_data.get('text'):
-                            # Collect all text content
-                            if combined_text:
-                                combined_text += "\n\n" + message_data.get('text', '')
-                            else:
-                                combined_text = message_data.get('text', '')
-                    
-                    if media_message:
-                        # Send ONE message with media + combined text + buttons
+                        # Get original message
+                        original_message = await client.get_messages(bridge_entity, ids=bridge_message_id)
+                        if not original_message:
+                            logger.error(f"❌ Message {bridge_message_id} not found")
+                            failed_count += 1
+                            continue
+                        
+                        # Send with buttons - EXACTLY LIKE ORIGINAL FORWARDER
+                        sent_msg = None
                         try:
-                            # Combine caption with additional text
-                            caption_text = media_message.get('caption', '')
-                            if caption_text and combined_text:
-                                final_caption = caption_text + "\n\n" + combined_text
-                            elif combined_text:
-                                final_caption = combined_text
+                            if original_message.media:
+                                sent_msg = await client.send_file(
+                                    chat_entity,
+                                    original_message.media,
+                                    caption=original_message.message,
+                                    buttons=telethon_buttons
+                                )
+                                logger.info(f"✅ Sent media with buttons to {chat_entity.title}")
                             else:
-                                final_caption = caption_text
-                            
-                            # ALWAYS add button URLs as text for media messages (ReplyKeyboardMarkup buttons don't work in regular groups)
+                                sent_msg = await client.send_message(
+                                    chat_entity,
+                                    original_message.message,
+                                    buttons=telethon_buttons
+                                )
+                                logger.info(f"✅ Sent text with buttons to {chat_entity.title}")
+                        except Exception as send_error:
+                            # Fallback: add button URLs as text
+                            logger.warning(f"⚠️ Buttons failed: {send_error}, using text fallback")
                             button_text = ""
-                            if telethon_reply_markup and hasattr(telethon_reply_markup, 'rows'):
-                                for button_row in telethon_reply_markup.rows:
-                                    for button in button_row:
-                                        if hasattr(button, 'url'):
-                                            button_text += f"\n\n🔗 {button.text}: {button.url}"
+                            for row in telethon_buttons:
+                                for btn in row:
+                                    if hasattr(btn, 'url'):
+                                        button_text += f"\n🔗 {btn.text}: {btn.url}"
                             
-                            # Combine caption with button text
-                            final_caption = (final_caption or "") + button_text
+                            msg_text = (original_message.message or '') + button_text
+                            if original_message.media:
+                                sent_msg = await client.send_file(chat_entity, original_message.media, caption=msg_text)
+                            else:
+                                sent_msg = await client.send_message(chat_entity, msg_text)
+                            logger.info(f"✅ Sent with text buttons to {chat_entity.title}")
+                        
+                        if sent_msg:
+                            sent_count += 1
+                            buttons_sent_count += 1
+                            msg_id = sent_msg[0].id if isinstance(sent_msg, list) else sent_msg.id
+                            self.log_ad_performance(campaign_id, campaign['user_id'], str(chat_entity.id), msg_id)
+                            self._record_message_sent(account_id)
+                        else:
+                            failed_count += 1
                             
-                            # Truncate message if too long (Telegram limit is 4096 characters)
-                            if len(final_caption) > 4000:  # Leave some room for safety
-                                final_caption = final_caption[:4000] + "..."
-                                logger.warning(f"Message truncated to fit Telegram limits (was {len(final_caption)} chars)")
+                    except Exception as bridge_err:
+                        logger.error(f"❌ Bridge channel error: {bridge_err}")
+                        failed_count += 1
+                    
+                    # Short delay
+                    await asyncio.sleep(random.uniform(0.5, 2.0))
+                    continue
+                
+                # OLD FORMAT - list with linked_message (backwards compatibility)
+                elif isinstance(ad_content, list) and ad_content:
+                    for message_data in ad_content:
+                        if message_data.get('type') == 'linked_message':
+                            storage_chat = message_data.get('storage_chat_id')
+                            storage_msg_id = message_data.get('storage_message_id')
                             
-                            # PROVEN SOLUTION: Add buttons as clickable text links (user accounts cannot send inline buttons)
-                            logger.info(f"Sending media with text-based buttons (user account compatible)")
-                            
-                            # Get the original text/caption
-                            original_text = media_message.get('caption', '')
-                            
-                            # Add button URLs as clickable text links (this works for user accounts)
-                            button_text = ""
-                            if campaign_buttons and len(campaign_buttons) > 0:
-                                button_text = "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                for button_info in campaign_buttons:
-                                    if button_info.get('url') and button_info.get('text'):
-                                        # Create clickable link format
-                                        button_text += f"🔗 [{button_info['text']}]({button_info['url']})\n"
-                                button_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                                logger.info(f"✅ Added {len(campaign_buttons)} clickable text buttons to message")
-                            
-                            # Combine original text with button text
-                            final_text = (original_text or "") + button_text
-                            
-                            # Truncate if too long
-                            if len(final_text) > 4000:
-                                final_text = final_text[:3900] + "...\n" + button_text[-100:]  # Keep buttons visible
-                            
-                            # UNIFIED TELETHON: Use stored client for perfect forwarding
                             try:
-                                # Get storage message ID and stored client from campaign data
-                                storage_message_id = media_message.get('storage_message_id')
-                                storage_chat_id = media_message.get('storage_chat_id')
-                                stored_client = media_message.get('telethon_client')
+                                storage_entity = await client.get_entity(int(storage_chat))
+                                original_message = await client.get_messages(storage_entity, ids=int(storage_msg_id))
                                 
-                                if storage_message_id and storage_chat_id:
-                                    logger.info(f"🔄 UNIFIED TELETHON: Forwarding storage message {storage_message_id}")
+                                if original_message:
+                                    if original_message.media:
+                                        sent_msg = await client.send_file(
+                                            chat_entity, original_message.media,
+                                            caption=original_message.message, buttons=telethon_buttons)
+                                    else:
+                                        sent_msg = await client.send_message(
+                                            chat_entity, original_message.message, buttons=telethon_buttons)
                                     
-                                    # Use stored client if available, otherwise use current client
-                                    forward_client = stored_client if stored_client else client
-                                    
-                                    # Get storage channel entity
-                                    storage_channel_entity = await forward_client.get_entity(storage_chat_id)
-                                    
-                                    # Forward the message from storage channel with retry mechanism
-                                    max_forward_retries = 3
-                                    forwarded_successfully = False
-                                    
-                                    for forward_attempt in range(max_forward_retries):
-                                        try:
-                                            # Verify client is still authorized before forwarding
-                                            if not await forward_client.is_user_authorized():
-                                                logger.error(f"❌ Forward client not authorized (attempt {forward_attempt + 1})")
-                                                break
-                                            
-                                            # SOLUTION: Create new message with text-based buttons instead of forwarding
-                                            # Get original message content
-                                            original_message = await forward_client.get_messages(storage_channel_entity, ids=storage_message_id)
-                                            if not original_message:
-                                                logger.error("Could not get original message from storage")
-                                                continue
-                                            
-                                            # Extract content and add text-based buttons
-                                            message_text = original_message.message or ""
-                                            
-                                            # Add clickable button links
-                                            button_text = ""
-                                            if campaign_buttons and len(campaign_buttons) > 0:
-                                                button_text = "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                                for button_info in campaign_buttons:
-                                                    if button_info.get('url') and button_info.get('text'):
-                                                        button_text += f"🔗 [{button_info['text']}]({button_info['url']})\n"
-                                                button_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                                            
-                                            final_message_text = message_text + button_text
-                                            
-                                            # Send new message with text-based buttons and media
-                                            if original_message.media:
-                                                forwarded_messages = await forward_client.send_file(
-                                                    chat_entity,
-                                                    file=original_message.media,
-                                                    caption=final_message_text,
-                                                    parse_mode='md'  # Enable markdown parsing for clickable links
-                                                )
-                                            else:
-                                                forwarded_messages = await forward_client.send_message(
-                                                    chat_entity,
-                                                    message=final_message_text,
-                                                    parse_mode='md'  # Enable markdown parsing for clickable links
-                                                )
-                                            
-                                            if forwarded_messages:
-                                                message = forwarded_messages[0] if isinstance(forwarded_messages, list) else forwarded_messages
-                                                logger.info(f"✅ UNIFIED TELETHON: Forwarded message with premium emojis and buttons to {chat_entity.title}")
+                                    if sent_msg:
+                                        sent_count += 1
+                                        buttons_sent_count += 1
+                            except Exception as e:
+                                logger.error(f"❌ Error: {e}")
+                                failed_count += 1
+                            
+                            await asyncio.sleep(random.uniform(0.5, 2.0))
+                
+            except Exception as send_error:
+                logger.error(f"❌ Error sending to {chat_entity.title}: {send_error}")
+                failed_count += 1
+                await asyncio.sleep(random.uniform(1, 3))
+                continue
+        
+        # END OF FOR LOOP - Orphan code cleaned up
                                                 forwarded_successfully = True
                                                 break
                                             else:

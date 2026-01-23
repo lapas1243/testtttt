@@ -750,13 +750,20 @@ async def handle_auto_ads_message(update: Update, context: ContextTypes.DEFAULT_
             )
             return True
         
-        # Format ad_content as list with storage info that bump_service expects
-        session['data']['ad_content'] = [{
-            'type': 'linked_message',
-            'message_link': text,
-            'storage_chat_id': channel_id,  # bump_service looks for storage_chat_id
-            'storage_message_id': message_id  # bump_service looks for storage_message_id
-        }]
+        # Format ad_content EXACTLY like original forwarder bot.py does
+        session['data']['ad_content'] = {
+            'bridge_channel': True,
+            'bridge_channel_entity': channel_id,
+            'bridge_message_id': message_id,
+            'bridge_link': text,
+            'message_id': message_id,
+            'chat_id': channel_id,
+            'original_message_id': message_id,
+            'original_chat_id': channel_id,
+            'has_custom_emojis': True,
+            'has_premium_emojis': True,
+            'media_type': 'bridge_channel'
+        }
         session['step'] = 'add_buttons'
         
         keyboard = [
