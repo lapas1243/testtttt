@@ -415,9 +415,8 @@ async def handle_auto_ads_run_campaign(update: Update, context: ContextTypes.DEF
     
     bump_service = get_bump_service(context.bot)
     
-    # Run in background
-    import asyncio
-    asyncio.create_task(bump_service.execute_campaign(campaign_id))
+    # Run in background using the correct async method
+    asyncio.create_task(bump_service._execute_campaign_async(campaign_id))
     
     text = f"🚀 **Campaign Started!**\n\nCampaign #{campaign_id} is now running.\n\nMessages will be sent according to anti-ban delays."
     
@@ -824,19 +823,23 @@ async def handle_auto_ads_message(update: Update, context: ContextTypes.DEFAULT_
     elif step == 'target_chats':
         targets = [t.strip() for t in text.split('\n') if t.strip()]
         session['data']['target_chats'] = targets
+        session['data']['target_mode'] = 'specific'
         session['step'] = 'schedule'
         
         keyboard = [
-            [InlineKeyboardButton("🔄 Continuous", callback_data="auto_ads_schedule|continuous")],
-            [InlineKeyboardButton("📅 Daily", callback_data="auto_ads_schedule|daily")],
-            [InlineKeyboardButton("🎯 Manual Only", callback_data="auto_ads_schedule|manual")],
+            [InlineKeyboardButton("🔄 Continuous (every ~30min)", callback_data="auto_ads_schedule|continuous")],
+            [InlineKeyboardButton("📅 Daily (once per day)", callback_data="auto_ads_schedule|daily")],
+            [InlineKeyboardButton("🎯 Manual Only (Run Now button)", callback_data="auto_ads_schedule|manual")],
             [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
         ]
         
         await update.message.reply_text(
             f"✅ **{len(targets)} target(s) set!**\n\n"
-            f"**Step 6/6: Schedule**\n\n"
-            f"Choose how often to send:",
+            f"⏰ **Step 6/6: Schedule**\n\n"
+            f"How often should ads be sent?\n\n"
+            f"• **Continuous** - Auto-sends every ~30 min with anti-ban delays\n"
+            f"• **Daily** - Sends once per day\n"
+            f"• **Manual** - Only runs when you click 'Run Now'",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -1228,12 +1231,16 @@ async def handle_auto_ads_confirm_groups(update: Update, context: ContextTypes.D
 
 Selected **{len(selected)}** target groups.
 
-Choose how often to run this campaign:"""
+How often should ads be sent?
+
+• **Continuous** - Auto-sends every ~30 min with anti-ban delays
+• **Daily** - Sends once per day
+• **Manual** - Only runs when you click 'Run Now'"""
     
     keyboard = [
-        [InlineKeyboardButton("🔄 Continuous", callback_data="auto_ads_schedule|continuous")],
-        [InlineKeyboardButton("📅 Daily", callback_data="auto_ads_schedule|daily")],
-        [InlineKeyboardButton("🎯 Manual Only", callback_data="auto_ads_schedule|manual")],
+        [InlineKeyboardButton("🔄 Continuous (every ~30min)", callback_data="auto_ads_schedule|continuous")],
+        [InlineKeyboardButton("📅 Daily (once per day)", callback_data="auto_ads_schedule|daily")],
+        [InlineKeyboardButton("🎯 Manual Only (Run Now button)", callback_data="auto_ads_schedule|manual")],
         [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
     ]
     
@@ -1264,12 +1271,16 @@ async def handle_auto_ads_all_groups(update: Update, context: ContextTypes.DEFAU
 
 📤 **Sending to ALL groups** the account is in.
 
-Choose how often to run this campaign:"""
+How often should ads be sent?
+
+• **Continuous** - Auto-sends every ~30 min with anti-ban delays
+• **Daily** - Sends once per day
+• **Manual** - Only runs when you click 'Run Now'"""
     
     keyboard = [
-        [InlineKeyboardButton("🔄 Continuous", callback_data="auto_ads_schedule|continuous")],
-        [InlineKeyboardButton("📅 Daily", callback_data="auto_ads_schedule|daily")],
-        [InlineKeyboardButton("🎯 Manual Only", callback_data="auto_ads_schedule|manual")],
+        [InlineKeyboardButton("🔄 Continuous (every ~30min)", callback_data="auto_ads_schedule|continuous")],
+        [InlineKeyboardButton("📅 Daily (once per day)", callback_data="auto_ads_schedule|daily")],
+        [InlineKeyboardButton("🎯 Manual Only (Run Now button)", callback_data="auto_ads_schedule|manual")],
         [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
     ]
     
