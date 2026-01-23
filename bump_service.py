@@ -2056,13 +2056,10 @@ class BumpService:
                                     failed_count += 1
                                     continue
                                 
-                                # Create inline keyboard buttons for Telethon
-                                inline_buttons = None
+                                # Create inline URL buttons using Button.url() - THE CORRECT WAY!
+                                telethon_buttons = None
                                 if buttons and len(buttons) > 0:
                                     try:
-                                        from telethon.tl.types import KeyboardButtonUrl
-                                        from telethon.tl.types import ReplyInlineMarkup, KeyboardButtonRow
-                                        
                                         button_rows = []
                                         for btn in buttons:
                                             if btn.get('text') and btn.get('url'):
@@ -2070,35 +2067,58 @@ class BumpService:
                                                 # Ensure URL has protocol
                                                 if not url.startswith('http://') and not url.startswith('https://'):
                                                     url = 'https://' + url
-                                                button_rows.append(KeyboardButtonRow(
-                                                    buttons=[KeyboardButtonUrl(text=btn['text'], url=url)]
-                                                ))
+                                                # Use Button.url() - this is how forwarder_bot does it!
+                                                button_rows.append([Button.url(btn['text'], url)])
+                                                logger.info(f"🔘 Created button: {btn['text']} -> {url}")
                                         
                                         if button_rows:
-                                            inline_buttons = ReplyInlineMarkup(rows=button_rows)
-                                            logger.info(f"🔘 Created {len(button_rows)} inline button(s)")
+                                            telethon_buttons = button_rows
+                                            logger.info(f"🔘 Created {len(button_rows)} inline URL button(s)")
                                     except Exception as btn_err:
-                                        logger.warning(f"⚠️ Could not create inline buttons: {btn_err}")
+                                        logger.error(f"❌ Could not create buttons: {btn_err}")
+                                        telethon_buttons = None
                                 
-                                # Send as new message (not forward) to allow buttons
+                                # Send as new message (not forward) WITH BUTTONS
                                 sent_msg = None
-                                if storage_msg.media:
-                                    # Has media - send with media and buttons
-                                    sent_msg = await client.send_file(
-                                        chat_entity,
-                                        storage_msg.media,
-                                        caption=storage_msg.message or '',
-                                        buttons=inline_buttons
-                                    )
-                                    logger.info(f"📸 Sent media with buttons to {chat_entity.title}")
-                                else:
-                                    # Text only - send with buttons
-                                    sent_msg = await client.send_message(
-                                        chat_entity,
-                                        storage_msg.message or '',
-                                        buttons=inline_buttons
-                                    )
-                                    logger.info(f"💬 Sent text with buttons to {chat_entity.title}")
+                                try:
+                                    if storage_msg.media:
+                                        # Has media - send with media and buttons
+                                        sent_msg = await client.send_file(
+                                            chat_entity,
+                                            storage_msg.media,
+                                            caption=storage_msg.message or '',
+                                            buttons=telethon_buttons
+                                        )
+                                        logger.info(f"📸 Sent media with {len(telethon_buttons) if telethon_buttons else 0} buttons to {chat_entity.title}")
+                                    else:
+                                        # Text only - send with buttons
+                                        sent_msg = await client.send_message(
+                                            chat_entity,
+                                            storage_msg.message or '',
+                                            buttons=telethon_buttons
+                                        )
+                                        logger.info(f"💬 Sent text with {len(telethon_buttons) if telethon_buttons else 0} buttons to {chat_entity.title}")
+                                except Exception as send_err:
+                                    # If buttons fail, try sending without buttons but with URL in text
+                                    logger.warning(f"⚠️ Send with buttons failed: {send_err}, trying with text URL")
+                                    try:
+                                        text_with_url = storage_msg.message or ''
+                                        if buttons:
+                                            for btn in buttons:
+                                                if btn.get('text') and btn.get('url'):
+                                                    text_with_url += f"\n\n🔗 {btn['text']}: {btn['url']}"
+                                        
+                                        if storage_msg.media:
+                                            sent_msg = await client.send_file(
+                                                chat_entity,
+                                                storage_msg.media,
+                                                caption=text_with_url
+                                            )
+                                        else:
+                                            sent_msg = await client.send_message(chat_entity, text_with_url)
+                                        logger.info(f"✅ Sent with URL in text to {chat_entity.title}")
+                                    except Exception as fallback_err:
+                                        logger.error(f"❌ All send methods failed: {fallback_err}")
                                 
                                 if sent_msg:
                                     logger.info(f"✅ Sent to {chat_entity.title} ({idx}/{len(target_entities)})")
