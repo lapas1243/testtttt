@@ -799,17 +799,25 @@ async def handle_auto_ads_message(update: Update, context: ContextTypes.DEFAULT_
             return True
         
         session['data']['buttons'] = buttons
-        session['step'] = 'target_chats'
+        session['step'] = 'target_selection_method'
+        
+        # Show target selection options with buttons
+        keyboard = [
+            [InlineKeyboardButton("📋 Select Groups", callback_data="auto_ads_fetch_groups")],
+            [InlineKeyboardButton("📤 Send to All Groups", callback_data="auto_ads_all_groups")],
+            [InlineKeyboardButton("✍️ Enter Manually", callback_data="auto_ads_manual_targets")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
+        ]
         
         await update.message.reply_text(
             f"✅ **{len(buttons)} button(s) added!**\n\n"
-            f"**Step 5/6: Target Chats**\n\n"
-            f"Enter target group/channel usernames or IDs.\n"
-            f"One per line:\n"
-            f"`@mygroup1`\n"
-            f"`@mygroup2`\n"
-            f"`-1001234567890`",
-            parse_mode=ParseMode.MARKDOWN
+            f"📍 **Step 5/6: Target Chats**\n\n"
+            f"How would you like to select target groups?\n\n"
+            f"• **Select Groups** - Choose from groups the account is in\n"
+            f"• **All Groups** - Send to all groups the account is in\n"
+            f"• **Enter Manually** - Type usernames/IDs manually",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return True
     
