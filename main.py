@@ -199,7 +199,7 @@ from stock import handle_view_stock
 try:
     from auto_ads import (
         handle_auto_ads_menu, handle_auto_ads_accounts, handle_auto_ads_add_account,
-        handle_auto_ads_account_detail, handle_auto_ads_del_account,
+        handle_auto_ads_account_detail, handle_auto_ads_del_account, handle_auto_ads_warmup,
         handle_auto_ads_campaigns, handle_auto_ads_campaign_detail,
         handle_auto_ads_new_campaign, handle_auto_ads_toggle_campaign,
         handle_auto_ads_del_campaign, handle_auto_ads_run_campaign,
@@ -439,6 +439,7 @@ def callback_query_router(func):
                     "auto_ads_manual_setup": handle_auto_ads_manual_setup,
                     "auto_ads_account": handle_auto_ads_account_detail,
                     "auto_ads_del_account": handle_auto_ads_del_account,
+                    "auto_ads_warmup": handle_auto_ads_warmup,
                     "auto_ads_campaigns": handle_auto_ads_campaigns,
                     "auto_ads_campaign": handle_auto_ads_campaign_detail,
                     "auto_ads_new_campaign": handle_auto_ads_new_campaign,

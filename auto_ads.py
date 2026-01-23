@@ -81,52 +81,140 @@ Select an option below:"""
 # ============================================================================
 
 async def handle_auto_ads_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Show managed Telegram accounts"""
+    """Show managed Telegram accounts with health status"""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id):
         return await query.answer("Access denied.", show_alert=True)
     
     await query.answer()
     db = get_forwarder_db()
+    bump_service = get_bump_service()
     user_id = query.from_user.id
     
     accounts = db.get_user_accounts(user_id)
     
     if not accounts:
-        text = """👥 **Telegram Accounts**
+        text = """👥 **Manage Accounts**
 
-No accounts configured yet.
+No Telegram accounts found.
 
-To add an account, you need:
-• API ID & API Hash from my.telegram.org
-• Phone number
-• Session string (from Telethon)"""
+Add your first account to start advertising!"""
         
         keyboard = [
-            [InlineKeyboardButton("➕ Add Account", callback_data="auto_ads_add_account")],
-            [InlineKeyboardButton("🔙 Back", callback_data="auto_ads_menu")]
+            [InlineKeyboardButton("➕ Add New Account", callback_data="auto_ads_add_account")],
+            [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="auto_ads_menu")]
         ]
     else:
-        text = f"👥 **Telegram Accounts** ({len(accounts)})\n\n"
+        text = "👥 **Manage Accounts**\n\n"
         keyboard = []
         
         for acc in accounts:
-            status = "🟢" if acc['is_active'] else "🔴"
-            text += f"{status} **{acc['account_name']}**\n"
-            text += f"   📱 {acc['phone_number']}\n\n"
+            # Get account health status
+            health_status = _get_account_health_status(bump_service, acc['id'])
+            
+            status_icon = "🟢" if acc['is_active'] else "🔴"
+            health_icon = health_status['icon']
+            
+            text += f"📱 **{acc['account_name']}**\n"
+            text += f"   📞 Phone: {acc['phone_number']}\n"
+            text += f"   Status: {status_icon} {'Active' if acc['is_active'] else 'Inactive'}\n"
+            text += f"   Health: {health_icon} {health_status['status']}\n\n"
+            
             keyboard.append([
                 InlineKeyboardButton(f"⚙️ {acc['account_name']}", callback_data=f"auto_ads_account|{acc['id']}"),
                 InlineKeyboardButton("🗑️", callback_data=f"auto_ads_del_account|{acc['id']}")
             ])
         
-        keyboard.append([InlineKeyboardButton("➕ Add Account", callback_data="auto_ads_add_account")])
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="auto_ads_menu")])
+        keyboard.append([InlineKeyboardButton("➕ Add New Account", callback_data="auto_ads_add_account")])
+        keyboard.append([InlineKeyboardButton("🔙 Back to Main Menu", callback_data="auto_ads_menu")])
     
     await query.edit_message_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
+def _get_account_health_status(bump_service, account_id: int) -> dict:
+    """Get account health status from bump_service"""
+    try:
+        from datetime import datetime, timedelta
+        
+        # Check warm-up mode
+        is_warmup, warmup_info = bump_service._is_account_in_warmup(account_id)
+        if is_warmup:
+            days_remaining = warmup_info.get('days_remaining', 0)
+            return {
+                'icon': '🆕',
+                'status': f'Warm-Up ({days_remaining}d left)',
+                'can_send': True,
+                'limit': 10
+            }
+        
+        # Check account age and status
+        with bump_service._get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT messages_sent_today, daily_limit, last_message_time, 
+                       account_created_date, is_restricted, restriction_reason
+                FROM account_usage_tracking
+                WHERE account_id = ?
+            ''', (account_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return {'icon': '❓', 'status': 'Unknown', 'can_send': True, 'limit': 50}
+            
+            messages_today, daily_limit, last_msg, created_date, is_restricted, restriction_reason = row
+            
+            if is_restricted:
+                return {
+                    'icon': '⛔',
+                    'status': f'Restricted: {restriction_reason or "Unknown"}',
+                    'can_send': False,
+                    'limit': 0
+                }
+            
+            # Calculate account age
+            age_days = 0
+            if created_date:
+                try:
+                    created = datetime.fromisoformat(created_date) if isinstance(created_date, str) else created_date
+                    age_days = (datetime.now() - created).days
+                except:
+                    pass
+            
+            # Determine status based on age
+            if age_days < 14:
+                return {
+                    'icon': '🆕',
+                    'status': f'New ({age_days}d) - {messages_today}/{daily_limit}',
+                    'can_send': messages_today < daily_limit,
+                    'limit': daily_limit
+                }
+            elif age_days < 30:
+                return {
+                    'icon': '🌱',
+                    'status': f'Warmed ({age_days}d) - {messages_today}/{daily_limit}',
+                    'can_send': messages_today < daily_limit,
+                    'limit': daily_limit
+                }
+            else:
+                if messages_today >= daily_limit:
+                    return {
+                        'icon': '⏸️',
+                        'status': f'At limit ({messages_today}/{daily_limit})',
+                        'can_send': False,
+                        'limit': daily_limit
+                    }
+                return {
+                    'icon': '✅',
+                    'status': f'Mature ({age_days}d) - {messages_today}/{daily_limit}',
+                    'can_send': True,
+                    'limit': daily_limit
+                }
+    except Exception as e:
+        logger.error(f"Error getting account health: {e}")
+        return {'icon': '❓', 'status': 'Unknown', 'can_send': True, 'limit': 50}
 
 async def handle_auto_ads_add_account(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
     """Start adding a new Telegram account"""
@@ -166,7 +254,7 @@ async def handle_auto_ads_manual_setup(update: Update, context: ContextTypes.DEF
     return await handle_auto_ads_add_account(update, context, params)
 
 async def handle_auto_ads_account_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Show account details"""
+    """Show detailed account information with health status"""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id):
         return await query.answer("Access denied.", show_alert=True)
@@ -178,24 +266,57 @@ async def handle_auto_ads_account_detail(update: Update, context: ContextTypes.D
         return await query.answer("Invalid account", show_alert=True)
     
     db = get_forwarder_db()
+    bump_service = get_bump_service()
     account = db.get_account(account_id)
     
     if not account:
         return await query.answer("Account not found", show_alert=True)
     
+    # Get health status
+    health = _get_account_health_status(bump_service, account_id)
+    is_warmup, warmup_info = bump_service._is_account_in_warmup(account_id)
+    
     status = "🟢 Active" if account['is_active'] else "🔴 Inactive"
-    text = f"""⚙️ **Account: {account['account_name']}**
+    
+    text = f"""⚙️ **{account['account_name']}**
 
+**Account Info:**
+📱 Phone: `{account['phone_number']}`
+🔑 API ID: `{account['api_id']}`
+📅 Added: {account['created_at'][:10] if account.get('created_at') else 'Unknown'}
+🔐 Session: {'✅ Configured' if account.get('session_string') else '❌ Not set'}
+
+**Status:**
 {status}
-📱 Phone: {account['phone_number']}
-🔑 API ID: {account['api_id']}
-📅 Added: {account['created_at'][:10]}
 
-Session: {'✅ Configured' if account.get('session_string') else '❌ Not set'}"""
+**🛡️ Health Status:**
+{health['icon']} **{health['status']}**
+📊 Daily Limit: {health['limit']} messages
+{'🟢 Can send more messages' if health['can_send'] else '🔴 At daily limit - resets at midnight'}
+"""
+    
+    if is_warmup:
+        text += f"""
+**🆕 Warm-Up Mode Active:**
+📅 Days remaining: {warmup_info.get('days_remaining', 0)}
+⚠️ Using conservative settings (slower delays, lower limits)
+"""
+    
+    # Get campaigns using this account
+    campaigns = bump_service.get_user_campaigns(query.from_user.id)
+    account_campaigns = [c for c in campaigns if c.get('account_id') == account_id]
+    
+    if account_campaigns:
+        text += f"\n**📢 Active Campaigns:** {len(account_campaigns)}\n"
+        for c in account_campaigns[:3]:
+            text += f"• {c['campaign_name']}\n"
+        if len(account_campaigns) > 3:
+            text += f"• ... and {len(account_campaigns) - 3} more\n"
     
     keyboard = [
+        [InlineKeyboardButton("🆕 Enable Warm-Up Mode", callback_data=f"auto_ads_warmup|{account_id}")],
         [InlineKeyboardButton("🗑️ Delete Account", callback_data=f"auto_ads_del_account|{account_id}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="auto_ads_accounts")]
+        [InlineKeyboardButton("🔙 Back to Accounts", callback_data="auto_ads_accounts")]
     ]
     
     await query.edit_message_text(
@@ -220,12 +341,39 @@ async def handle_auto_ads_del_account(update: Update, context: ContextTypes.DEFA
     await query.answer("✅ Account deleted!", show_alert=True)
     return await handle_auto_ads_accounts(update, context)
 
+async def handle_auto_ads_warmup(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Toggle warm-up mode for an account"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    account_id = int(params[0]) if params else None
+    if not account_id:
+        return await query.answer("Invalid account", show_alert=True)
+    
+    bump_service = get_bump_service()
+    
+    # Check current warm-up status
+    is_warmup, warmup_info = bump_service._is_account_in_warmup(account_id)
+    
+    if is_warmup:
+        # Disable warm-up mode
+        bump_service.disable_warmup_mode(account_id)
+        await query.answer("✅ Warm-up mode disabled!", show_alert=True)
+    else:
+        # Enable warm-up mode (7 days default)
+        bump_service.enable_warmup_mode(account_id, duration_days=7)
+        await query.answer("✅ Warm-up mode enabled for 7 days!", show_alert=True)
+    
+    # Return to account detail
+    return await handle_auto_ads_account_detail(update, context, params)
+
 # ============================================================================
 # CAMPAIGN MANAGEMENT
 # ============================================================================
 
 async def handle_auto_ads_campaigns(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Show all campaigns"""
+    """Show all campaigns (bump service main menu)"""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id):
         return await query.answer("Access denied.", show_alert=True)
@@ -238,33 +386,63 @@ async def handle_auto_ads_campaigns(update: Update, context: ContextTypes.DEFAUL
     campaigns = bump_service.get_user_campaigns(user_id)
     
     if not campaigns:
-        text = """📢 **Ad Campaigns**
+        text = """📢 **Bump Service - Ad Campaigns**
 
 No campaigns created yet.
 
-Create your first campaign to start automated advertising!"""
+**What is Bump Service?**
+Automatically post your ads to multiple groups/channels on a schedule.
+
+**Features:**
+• 🎯 Target multiple groups at once
+• ⏰ Daily, Weekly, Hourly, or Custom schedules
+• 🛡️ Anti-ban protection built-in
+• 📊 Track sends and performance
+
+Create your first campaign to get started!"""
         
         keyboard = [
             [InlineKeyboardButton("➕ Create Campaign", callback_data="auto_ads_new_campaign")],
-            [InlineKeyboardButton("🔙 Back", callback_data="auto_ads_menu")]
+            [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="auto_ads_menu")]
         ]
     else:
-        text = f"📢 **Ad Campaigns** ({len(campaigns)})\n\n"
+        active_count = sum(1 for c in campaigns if c.get('is_active'))
+        total_sends = sum(c.get('total_sends', 0) for c in campaigns)
+        
+        text = f"""📢 **Bump Service - Ad Campaigns**
+
+📊 **Overview:**
+• Active Campaigns: {active_count}/{len(campaigns)}
+• Total Sends: {total_sends}
+
+**Your Campaigns:**
+"""
         keyboard = []
         
         for camp in campaigns:
             status = "🟢" if camp.get('is_active') else "🔴"
             targets = camp.get('target_chats', [])
+            if isinstance(targets, str):
+                import json
+                try:
+                    targets = json.loads(targets)
+                except:
+                    targets = []
             target_count = len(targets) if isinstance(targets, list) else 0
+            if targets == ['ALL_WORKER_GROUPS']:
+                target_info = "All Groups"
+            else:
+                target_info = f"{target_count} targets"
             
-            text += f"{status} **{camp['campaign_name']}**\n"
-            text += f"   📍 {target_count} targets | 📊 {camp.get('total_sends', 0)} sends\n\n"
+            text += f"\n{status} **{camp['campaign_name']}**\n"
+            text += f"   📍 {target_info} | 📊 {camp.get('total_sends', 0)} sends | ⏰ {camp.get('schedule_type', 'manual')}\n"
             
             keyboard.append([
                 InlineKeyboardButton(f"📋 {camp['campaign_name']}", callback_data=f"auto_ads_campaign|{camp['id']}"),
+                InlineKeyboardButton("🗑️", callback_data=f"auto_ads_del_campaign|{camp['id']}")
             ])
         
-        keyboard.append([InlineKeyboardButton("➕ Create Campaign", callback_data="auto_ads_new_campaign")])
+        keyboard.append([InlineKeyboardButton("➕ Create New Campaign", callback_data="auto_ads_new_campaign")])
         keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="auto_ads_menu")])
     
     await query.edit_message_text(
@@ -274,7 +452,7 @@ Create your first campaign to start automated advertising!"""
     )
 
 async def handle_auto_ads_campaign_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Show campaign details"""
+    """Show detailed campaign information"""
     query = update.callback_query
     if not is_primary_admin(query.from_user.id):
         return await query.answer("Access denied.", show_alert=True)
@@ -286,31 +464,71 @@ async def handle_auto_ads_campaign_detail(update: Update, context: ContextTypes.
         return await query.answer("Invalid campaign", show_alert=True)
     
     bump_service = get_bump_service()
-    campaign = bump_service.db.get_campaign(campaign_id)
+    db = get_forwarder_db()
+    campaign = bump_service.get_campaign(campaign_id)
     
     if not campaign:
         return await query.answer("Campaign not found", show_alert=True)
     
-    status = "🟢 Active" if campaign.get('is_active') else "🔴 Paused"
+    # Get account info
+    account = db.get_account(campaign.get('account_id'))
+    account_name = account['account_name'] if account else 'Unknown'
+    
+    # Parse targets
     targets = campaign.get('target_chats', [])
-    target_count = len(targets) if isinstance(targets, list) else 0
+    if isinstance(targets, str):
+        import json
+        try:
+            targets = json.loads(targets)
+        except:
+            targets = []
+    
+    target_mode = campaign.get('target_mode', 'specific')
+    if target_mode == 'all_groups' or targets == ['ALL_WORKER_GROUPS']:
+        target_info = "📤 All account groups"
+    else:
+        target_info = f"📍 {len(targets) if isinstance(targets, list) else 0} specific targets"
+    
+    # Parse buttons
+    buttons = campaign.get('buttons', [])
+    if isinstance(buttons, str):
+        import json
+        try:
+            buttons = json.loads(buttons)
+        except:
+            buttons = []
+    buttons_count = len(buttons) if buttons else 0
+    
+    status = "🟢 Active" if campaign.get('is_active') else "🔴 Paused"
+    schedule_type = campaign.get('schedule_type', 'manual')
+    schedule_time = campaign.get('schedule_time', '')
+    schedule_display = f"{schedule_type}"
+    if schedule_time:
+        schedule_display += f" ({schedule_time})"
     
     text = f"""📋 **Campaign: {campaign['campaign_name']}**
 
-{status}
-📍 Targets: {target_count} groups/channels
-📊 Total Sends: {campaign.get('total_sends', 0)}
-⏰ Schedule: {campaign.get('schedule_type', 'manual')}
-📅 Last Run: {campaign.get('last_run', 'Never')[:16] if campaign.get('last_run') else 'Never'}"""
+**Status:** {status}
+
+**📊 Statistics:**
+• Total Sends: {campaign.get('total_sends', 0)}
+• Last Run: {campaign.get('last_run', 'Never')[:16] if campaign.get('last_run') else 'Never'}
+
+**⚙️ Configuration:**
+• Account: 📱 {account_name}
+• {target_info}
+• Schedule: ⏰ {schedule_display}
+• Buttons: 🔘 {buttons_count} configured
+
+**📅 Created:** {campaign.get('created_at', 'Unknown')[:10] if campaign.get('created_at') else 'Unknown'}"""
     
-    toggle_text = "⏸️ Pause" if campaign.get('is_active') else "▶️ Activate"
+    toggle_text = "⏸️ Pause Campaign" if campaign.get('is_active') else "▶️ Resume Campaign"
     
     keyboard = [
         [InlineKeyboardButton("🚀 Run Now", callback_data=f"auto_ads_run_campaign|{campaign_id}")],
         [InlineKeyboardButton(toggle_text, callback_data=f"auto_ads_toggle_campaign|{campaign_id}")],
-        [InlineKeyboardButton("✏️ Edit", callback_data=f"auto_ads_edit_campaign|{campaign_id}")],
-        [InlineKeyboardButton("🗑️ Delete", callback_data=f"auto_ads_del_campaign|{campaign_id}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="auto_ads_campaigns")]
+        [InlineKeyboardButton("🗑️ Delete Campaign", callback_data=f"auto_ads_del_campaign|{campaign_id}")],
+        [InlineKeyboardButton("🔙 Back to Campaigns", callback_data="auto_ads_campaigns")]
     ]
     
     await query.edit_message_text(
