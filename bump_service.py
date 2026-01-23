@@ -572,7 +572,7 @@ class BumpService:
                     logger.debug(f"Read receipt error for {chat}: {e}")
             
             # Update last online simulation time
-            conn = self.get_db_connection()
+            conn = self._get_db_connection()
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE account_usage_tracking 
@@ -596,7 +596,7 @@ class BumpService:
         logger.error(f"⚠️ This is a PRE-BAN WARNING from Telegram!")
         
         try:
-            conn = self.get_db_connection()
+            conn = self._get_db_connection()
             cursor = conn.cursor()
             
             # Mark peer flood detected
@@ -630,7 +630,7 @@ class BumpService:
         This helps track which accounts are being rate-limited.
         """
         try:
-            conn = self.get_db_connection()
+            conn = self._get_db_connection()
             cursor = conn.cursor()
             
             # Update account tracking with flood wait info
@@ -659,7 +659,7 @@ class BumpService:
         from datetime import datetime, timedelta
         
         try:
-            conn = self.get_db_connection()
+            conn = self._get_db_connection()
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -685,7 +685,7 @@ class BumpService:
                     return True, f"PeerFlood cooldown active (wait {remaining:.1f} more hours)"
                 else:
                     # Cooldown expired, clear flag
-                    conn = self.get_db_connection()
+                    conn = self._get_db_connection()
                     cursor = conn.cursor()
                     cursor.execute("""
                         UPDATE account_usage_tracking 
@@ -2042,15 +2042,28 @@ class BumpService:
                 # Check if ad_content is bridge channel format (like original forwarder)
                 if isinstance(ad_content, dict) and ad_content.get('bridge_channel'):
                     # ORIGINAL FORWARDER FORMAT - bridge channel
-                    bridge_channel_entity = ad_content.get('bridge_channel_entity')
+                    bridge_channel_entity_id = ad_content.get('bridge_channel_entity')
                     bridge_message_id = ad_content.get('bridge_message_id')
                     
-                    logger.info(f"🔗 Bridge channel: {bridge_channel_entity}, Message ID: {bridge_message_id}")
+                    logger.info(f"🔗 Bridge channel: {bridge_channel_entity_id}, Message ID: {bridge_message_id}")
                     
                     try:
-                        # Get bridge channel entity
-                        bridge_entity = await client.get_entity(bridge_channel_entity)
-                        logger.info(f"✅ Bridge channel resolved: {getattr(bridge_entity, 'title', bridge_channel_entity)}")
+                        # Use storage_channel if it matches, otherwise fetch the entity
+                        if storage_channel and str(bridge_channel_entity_id) == str(storage_channel_id):
+                            bridge_entity = storage_channel
+                            logger.info(f"✅ Using cached storage channel: {bridge_entity.title}")
+                        else:
+                            # Try to get entity - convert to int if string
+                            try:
+                                entity_id = int(bridge_channel_entity_id) if isinstance(bridge_channel_entity_id, str) else bridge_channel_entity_id
+                                bridge_entity = await client.get_entity(entity_id)
+                            except Exception as entity_err:
+                                # Fallback: refresh dialogs and try again
+                                logger.warning(f"⚠️ Entity not found, refreshing dialogs...")
+                                await client.get_dialogs(limit=50)
+                                entity_id = int(bridge_channel_entity_id) if isinstance(bridge_channel_entity_id, str) else bridge_channel_entity_id
+                                bridge_entity = await client.get_entity(entity_id)
+                            logger.info(f"✅ Bridge channel resolved: {getattr(bridge_entity, 'title', bridge_channel_entity_id)}")
                         
                         # Get original message
                         original_message = await client.get_messages(bridge_entity, ids=bridge_message_id)
