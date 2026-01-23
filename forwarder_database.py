@@ -27,11 +27,11 @@ class Database:
     def __init__(self, db_path: str = None):
         # Use persistent disk if available, otherwise local storage
         if db_path is None:
-            # Check for Render persistent disk mount
-            if os.path.exists('/data'):
-                self.db_path = '/data/tgcf.db'
+            # Check for Render persistent disk mount (same as main bot uses)
+            if os.path.exists('/mnt/data'):
+                self.db_path = '/mnt/data/auto_ads.db'
             else:
-                self.db_path = 'tgcf.db'
+                self.db_path = 'auto_ads.db'
         else:
             self.db_path = db_path
         

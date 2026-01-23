@@ -11,11 +11,15 @@ from forwarder_config import Config
 def check_account_safety():
     """Check all accounts' safety status"""
     
-    # Determine database path
+    # Determine database path (use same persistent path as main bot)
     if hasattr(Config, 'DATABASE_PATH'):
         db_path = Config.DATABASE_PATH
     else:
-        db_path = 'tgcf.db'
+        import os
+        if os.path.exists('/mnt/data'):
+            db_path = '/mnt/data/auto_ads.db'
+        else:
+            db_path = 'auto_ads.db'
     
     print("=" * 80)
     print("🛡️  ACCOUNT SAFETY STATUS REPORT")

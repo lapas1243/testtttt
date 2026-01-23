@@ -40,8 +40,9 @@ class Config:
     DATABASE_URL = os.getenv('DATABASE_URL')
     
     # Persistent Storage Configuration
-    PERSISTENT_DISK_PATH = '/data'  # Render persistent disk mount point
-    DATABASE_PATH = os.path.join(PERSISTENT_DISK_PATH, 'tgcf.db') if os.path.exists(PERSISTENT_DISK_PATH) else 'tgcf.db'
+    # Match main bot's persistent disk path (/mnt/data)
+    PERSISTENT_DISK_PATH = '/mnt/data'  # Render persistent disk mount point (same as main bot)
+    DATABASE_PATH = os.path.join(PERSISTENT_DISK_PATH, 'auto_ads.db') if os.path.exists(PERSISTENT_DISK_PATH) else 'auto_ads.db'
     
     # Environment
     ENVIRONMENT = os.getenv('ENVIRONMENT', 'development')

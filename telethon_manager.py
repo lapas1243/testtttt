@@ -19,9 +19,9 @@ class TelethonManager:
     
     def __init__(self):
         self.clients: Dict[str, TelegramClient] = {}
-        # Use persistent disk if available, otherwise local directory
-        if os.path.exists('/data'):
-            self.session_dir = "/data/sessions"
+        # Use persistent disk if available, otherwise local directory (same as main bot)
+        if os.path.exists('/mnt/data'):
+            self.session_dir = "/mnt/data/sessions"
         else:
             self.session_dir = "sessions"
         os.makedirs(self.session_dir, exist_ok=True)
