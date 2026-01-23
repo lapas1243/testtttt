@@ -718,11 +718,97 @@ async def handle_auto_ads_message(update: Update, context: ContextTypes.DEFAULT_
         return True
     
     elif step == 'ad_content':
-        session['data']['ad_content'] = {'text': text, 'media_type': 'text'}
+        # Parse message link
+        import re
+        
+        if 't.me/' not in text and 'telegram.me/' not in text:
+            await update.message.reply_text(
+                "❌ **Invalid link!**\n\nPlease send a valid Telegram message link.\n\n"
+                "Example: `https://t.me/yourchannel/123`",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return True
+        
+        # Parse the link
+        # Private channel: https://t.me/c/1234567890/123
+        # Public channel: https://t.me/channelname/123
+        
+        private_match = re.search(r't\.me/c/(\d+)/(\d+)', text)
+        public_match = re.search(r't\.me/([^/]+)/(\d+)', text)
+        
+        if private_match:
+            channel_id = f"-100{private_match.group(1)}"
+            message_id = int(private_match.group(2))
+            channel_display = f"Private Channel"
+        elif public_match and public_match.group(1) != 'c':
+            channel_id = f"@{public_match.group(1)}"
+            message_id = int(public_match.group(2))
+            channel_display = channel_id
+        else:
+            await update.message.reply_text(
+                "❌ **Could not parse link!**\n\nPlease check the format and try again.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return True
+        
+        session['data']['ad_content'] = {
+            'message_link': text,
+            'channel_id': channel_id,
+            'message_id': message_id,
+            'media_type': 'bridge_channel'
+        }
+        session['step'] = 'add_buttons'
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ Yes, Add Buttons", callback_data="auto_ads_buttons_yes")],
+            [InlineKeyboardButton("❌ No Buttons", callback_data="auto_ads_buttons_no")],
+            [InlineKeyboardButton("🚫 Cancel", callback_data="auto_ads_campaigns")]
+        ]
+        
+        await update.message.reply_text(
+            f"✅ **Message Link Set!**\n\n"
+            f"**Channel:** {channel_display}\n"
+            f"**Message ID:** {message_id}\n\n"
+            f"**Step 4/6: Add Buttons?**\n\n"
+            f"Would you like to add clickable buttons under your ad?",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return True
+    
+    elif step == 'button_input':
+        # Parse buttons: "Button Text | https://link.com" per line
+        buttons = []
+        for line in text.strip().split('\n'):
+            if '|' in line:
+                parts = line.split('|', 1)
+                if len(parts) == 2:
+                    btn_text = parts[0].strip()
+                    btn_url = parts[1].strip()
+                    if btn_text and btn_url:
+                        buttons.append({'text': btn_text, 'url': btn_url})
+        
+        if not buttons:
+            await update.message.reply_text(
+                "❌ **No valid buttons found!**\n\n"
+                "Format: `Button Text | https://link.com`\n"
+                "One button per line.\n\n"
+                "Try again:",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return True
+        
+        session['data']['buttons'] = buttons
         session['step'] = 'target_chats'
         
         await update.message.reply_text(
-            "**Step 4/5: Target Chats**\n\nEnter target group/channel usernames or IDs.\n\nOne per line, e.g.:\n@mygroup1\n@mygroup2\n-1001234567890",
+            f"✅ **{len(buttons)} button(s) added!**\n\n"
+            f"**Step 5/6: Target Chats**\n\n"
+            f"Enter target group/channel usernames or IDs.\n"
+            f"One per line:\n"
+            f"`@mygroup1`\n"
+            f"`@mygroup2`\n"
+            f"`-1001234567890`",
             parse_mode=ParseMode.MARKDOWN
         )
         return True
@@ -740,7 +826,9 @@ async def handle_auto_ads_message(update: Update, context: ContextTypes.DEFAULT_
         ]
         
         await update.message.reply_text(
-            f"**Step 5/5: Schedule**\n\nTargets: {len(targets)} groups/channels\n\nChoose how often to send:",
+            f"✅ **{len(targets)} target(s) set!**\n\n"
+            f"**Step 6/6: Schedule**\n\n"
+            f"Choose how often to send:",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -764,16 +852,96 @@ async def handle_auto_ads_select_account(update: Update, context: ContextTypes.D
     _user_sessions[user_id]['data']['account_id'] = account_id
     _user_sessions[user_id]['step'] = 'ad_content'
     
-    text = """**Step 3/5: Ad Content**
+    text = """**Step 3/6: Ad Content (Message Link)**
 
-Send the message you want to advertise.
+🔗 **Send me the Telegram message link**
 
-You can send:
-• Text message
-• Photo with caption
-• Video with caption
+**How to get the link:**
+1️⃣ Go to your channel/group
+2️⃣ Post your ad message with premium emojis
+3️⃣ Right-click the message → Copy Message Link
+4️⃣ Paste the link here
 
-Just send your ad content now:"""
+**Example formats:**
+• `https://t.me/yourchannel/123`
+• `https://t.me/c/1234567890/123`
+
+**Why use a link?**
+✨ Preserves premium emojis
+📸 Keeps all media and formatting
+🔘 You can add buttons after"""
+    
+    keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def handle_auto_ads_buttons_yes(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """User wants to add buttons"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    await query.answer()
+    user_id = query.from_user.id
+    
+    if user_id not in _user_sessions:
+        return await query.answer("Session expired", show_alert=True)
+    
+    _user_sessions[user_id]['step'] = 'button_input'
+    
+    text = """🔘 **Add Buttons**
+
+Send your buttons in this format:
+`Button Text | https://link.com`
+
+One button per line. Example:
+```
+Shop Now | https://myshop.com
+Contact Us | https://t.me/support
+```
+
+Send your buttons:"""
+    
+    keyboard = [
+        [InlineKeyboardButton("⏭️ Skip Buttons", callback_data="auto_ads_buttons_no")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def handle_auto_ads_buttons_no(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """User doesn't want buttons, go to targets"""
+    query = update.callback_query
+    if not is_primary_admin(query.from_user.id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    await query.answer()
+    user_id = query.from_user.id
+    
+    if user_id not in _user_sessions:
+        return await query.answer("Session expired", show_alert=True)
+    
+    _user_sessions[user_id]['data']['buttons'] = []
+    _user_sessions[user_id]['step'] = 'target_chats'
+    
+    text = """**Step 5/6: Target Chats**
+
+Enter target group/channel usernames or IDs.
+One per line:
+
+`@mygroup1`
+`@mygroup2`
+`-1001234567890`
+
+Send your targets:"""
     
     keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="auto_ads_campaigns")]]
     

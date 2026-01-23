@@ -206,6 +206,7 @@ try:
         handle_auto_ads_stats, handle_auto_ads_message,
         handle_auto_ads_select_account, handle_auto_ads_schedule,
         handle_auto_ads_upload_session, handle_auto_ads_manual_setup,
+        handle_auto_ads_buttons_yes, handle_auto_ads_buttons_no,
         handle_auto_ads_document,
         get_bump_service
     )
@@ -442,6 +443,8 @@ def callback_query_router(func):
                     "auto_ads_stats": handle_auto_ads_stats,
                     "auto_ads_select_account": handle_auto_ads_select_account,
                     "auto_ads_schedule": handle_auto_ads_schedule,
+                    "auto_ads_buttons_yes": handle_auto_ads_buttons_yes,
+                    "auto_ads_buttons_no": handle_auto_ads_buttons_no,
                 })
 
             target_func = KNOWN_HANDLERS.get(command)
