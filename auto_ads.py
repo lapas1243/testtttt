@@ -750,12 +750,13 @@ async def handle_auto_ads_message(update: Update, context: ContextTypes.DEFAULT_
             )
             return True
         
-        session['data']['ad_content'] = {
+        # Format ad_content as list with storage info that bump_service expects
+        session['data']['ad_content'] = [{
+            'type': 'linked_message',
             'message_link': text,
-            'channel_id': channel_id,
-            'message_id': message_id,
-            'media_type': 'bridge_channel'
-        }
+            'storage_chat_id': channel_id,  # bump_service looks for storage_chat_id
+            'storage_message_id': message_id  # bump_service looks for storage_message_id
+        }]
         session['step'] = 'add_buttons'
         
         keyboard = [
