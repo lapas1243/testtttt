@@ -1896,55 +1896,11 @@ class BumpService:
         buttons = campaign.get('buttons', [])
         sent_count = 0
         
-        # Create buttons from campaign data or use default
-        
-        # Create ReplyKeyboardMarkup for worker account (persistent bottom keyboard)
-        telethon_reply_markup = None
+        # Button info for logging
         if buttons and len(buttons) > 0:
-            try:
-                # Create button rows for ReplyKeyboardMarkup with text buttons
-                button_rows = []
-                for button_info in buttons:
-                    if button_info.get('text'):
-                        # Create simple text button for ReplyKeyboardMarkup
-                        from telethon.tl.types import KeyboardButton
-                        button_row = [KeyboardButton(
-                            text=button_info['text']
-                        )]
-                        button_rows.append(button_row)
-                        logger.info(f"✅ Created ReplyKeyboard button: '{button_info['text']}'")
-                
-                if button_rows:
-                    # Create ReplyKeyboardMarkup (persistent bottom keyboard)
-                    from telethon.tl.types import ReplyKeyboardMarkup
-                    telethon_reply_markup = ReplyKeyboardMarkup(
-                        rows=button_rows,
-                        resize=True,        # Makes buttons large and full-width
-                        persistent=True,    # Stays visible for ALL messages
-                        selective=False     # Shows to everyone in group
-                    )
-                    logger.info(f"🔘 Created ReplyKeyboardMarkup with {len(button_rows)} URL button rows")
-                    logger.info(f"🔘 ReplyKeyboardMarkup type: {type(telethon_reply_markup)}")
-                else:
-                    logger.warning(f"⚠️ No valid URL buttons created")
-                    telethon_reply_markup = None
-            except Exception as e:
-                logger.error(f"❌ ReplyKeyboardMarkup creation failed: {e}")
-                telethon_reply_markup = None
-        
-        # Store button data for bot to use later
-        campaign_buttons = buttons if buttons and len(buttons) > 0 else []
-        logger.info(f"📱 Bot will handle InlineKeyboardMarkup: {len(campaign_buttons)} buttons configured")
-        
-        # Debug button creation
-        if telethon_reply_markup:
-            logger.info(f"🔘 SUCCESS: Created InlineKeyboardMarkup with {len(telethon_reply_markup.rows)} button rows for worker account")
-            for i, row in enumerate(telethon_reply_markup.rows):
-                logger.info(f"🔘 Row {i}: {len(row)} buttons")
-                for j, btn in enumerate(row):
-                    logger.info(f"🔘 Button {i},{j}: {btn.text}")
-        else:
-            logger.warning(f"⚠️ No InlineKeyboardMarkup created for worker account")
+            logger.info(f"🔘 Campaign has {len(buttons)} button(s) configured")
+            for btn in buttons:
+                logger.info(f"   📎 {btn.get('text', '?')} -> {btn.get('url', '?')}")
         
         # Get all groups if target_mode is all_groups
         if campaign.get('target_mode') == 'all_groups' or target_chats == ['ALL_WORKER_GROUPS']:
@@ -2072,30 +2028,25 @@ class BumpService:
                             failed_count += 1
                             continue
                         
-                        # CHECK: If this is a bot-created message with buttons, FORWARD it
-                        # Forwarding preserves inline buttons that bots add!
+                        # ═══════════════════════════════════════════════════════════════════════════
+                        # EXACT COPY FROM ORIGINAL FORWARDER - FORWARD MESSAGE (preserves buttons!)
+                        # ═══════════════════════════════════════════════════════════════════════════
                         sent_msg = None
-                        is_bot_created = ad_content.get('bot_created', False) or ad_content.get('has_buttons', False)
                         
-                        if is_bot_created:
-                            # FORWARD the bot's message - this preserves inline buttons!
-                            logger.info(f"🔄 FORWARDING bot message (preserves inline buttons)")
-                            try:
-                                sent_msg = await client.forward_messages(
-                                    entity=chat_entity,
-                                    messages=bridge_message_id,
-                                    from_peer=storage_channel_entity
-                                )
-                                logger.info(f"✅ Forwarded message with buttons to {chat_entity.title}")
-                            except Exception as fwd_err:
-                                logger.error(f"❌ Forward failed: {fwd_err}, trying send instead")
-                                is_bot_created = False  # Fall through to send method
-                        
-                        if not is_bot_created:
-                            # Regular send with text-based button links (fallback)
-                            # IMPORTANT: Inline buttons DON'T work in regular groups for user accounts!
+                        # ALWAYS use forward_messages - this preserves EVERYTHING including inline buttons!
+                        # The message in storage channel must be posted BY A BOT with buttons for them to work
+                        logger.info(f"🔄 FORWARDING message from storage (preserves buttons if bot-created)")
+                        try:
+                            sent_msg = await client.forward_messages(
+                                entity=chat_entity,
+                                messages=bridge_message_id,
+                                from_peer=storage_channel_entity
+                            )
+                            logger.info(f"✅ Forwarded to {chat_entity.title}")
+                        except Exception as fwd_err:
+                            logger.warning(f"⚠️ Forward failed: {fwd_err}, trying send_file")
                             
-                            # Build button text (clickable links that work everywhere)
+                            # Fallback: send the content directly with text-based buttons
                             button_text = ""
                             if buttons and len(buttons) > 0:
                                 button_text = "\n\n━━━━━━━━━━━━━━━━━"
@@ -2107,7 +2058,6 @@ class BumpService:
                                             btn_url = 'https://' + btn_url
                                         button_text += f"\n🔗 {btn_text}: {btn_url}"
                             
-                            # Combine caption with button URLs as text
                             final_caption = (original_message.message or '') + button_text
                             
                             try:
@@ -2118,24 +2068,15 @@ class BumpService:
                                         caption=final_caption,
                                         buttons=telethon_buttons
                                     )
-                                    logger.info(f"✅ Sent media to {chat_entity.title}")
                                 else:
                                     sent_msg = await client.send_message(
                                         chat_entity,
                                         final_caption,
                                         buttons=telethon_buttons
                                     )
-                                    logger.info(f"✅ Sent text to {chat_entity.title}")
-                            except Exception as send_error:
-                                logger.warning(f"⚠️ Send failed: {send_error}, using fallback")
-                                try:
-                                    if original_message.media:
-                                        sent_msg = await client.send_file(chat_entity, original_message.media, caption=final_caption)
-                                    else:
-                                        sent_msg = await client.send_message(chat_entity, final_caption)
-                                    logger.info(f"✅ Sent with text buttons to {chat_entity.title}")
-                                except Exception as final_error:
-                                    logger.error(f"❌ Failed to send to {chat_entity.title}: {final_error}")
+                                logger.info(f"✅ Sent to {chat_entity.title}")
+                            except Exception as send_err:
+                                logger.error(f"❌ Failed to send to {chat_entity.title}: {send_err}")
                         
                         if sent_msg:
                             sent_count += 1
