@@ -1153,6 +1153,12 @@ async def _create_bot_message_with_buttons(ad_content: dict, buttons: list, bot)
             btn_text = btn.get('text', 'Click Here')
             btn_url = btn.get('url', '')
             if btn_url:
+                # Fix malformed URLs like "https:/example.com" or "http:/example.com"
+                btn_url = btn_url.replace('https:/', 'https://').replace('http:/', 'http://')
+                # Remove duplicate protocols
+                btn_url = btn_url.replace('https://https://', 'https://').replace('http://http://', 'http://')
+                btn_url = btn_url.replace('https://http://', 'http://').replace('http://https://', 'https://')
+                # Add protocol if missing
                 if not btn_url.startswith('http://') and not btn_url.startswith('https://'):
                     btn_url = 'https://' + btn_url
                 row.append(InlineKeyboardButton(btn_text, url=btn_url))

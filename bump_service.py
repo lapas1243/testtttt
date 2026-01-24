@@ -1966,6 +1966,12 @@ class BumpService:
                 for i, btn in enumerate(buttons):
                     if btn.get('url'):
                         url = btn['url']
+                        # Fix malformed URLs like "https:/example.com"
+                        url = url.replace('https:/', 'https://').replace('http:/', 'http://')
+                        # Remove duplicate protocols
+                        url = url.replace('https://https://', 'https://').replace('http://http://', 'http://')
+                        url = url.replace('https://http://', 'http://').replace('http://https://', 'https://')
+                        # Add protocol if missing
                         if not url.startswith('http://') and not url.startswith('https://'):
                             url = 'https://' + url
                         telethon_button = Button.url(btn['text'], url)
@@ -2054,6 +2060,9 @@ class BumpService:
                                     btn_text = btn.get('text', 'Click Here')
                                     btn_url = btn.get('url', '')
                                     if btn_url:
+                                        # Fix malformed URLs
+                                        btn_url = btn_url.replace('https:/', 'https://').replace('http:/', 'http://')
+                                        btn_url = btn_url.replace('https://https://', 'https://').replace('http://http://', 'http://')
                                         if not btn_url.startswith('http://') and not btn_url.startswith('https://'):
                                             btn_url = 'https://' + btn_url
                                         button_text += f"\n🔗 {btn_text}: {btn_url}"
