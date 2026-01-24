@@ -2035,50 +2035,66 @@ class BumpService:
                             continue
                         
                         # ═══════════════════════════════════════════════════════════════════════════
-                        # EXACT COPY FROM ORIGINAL FORWARDER bot.py line 2107-2111
-                        # ALWAYS include button URLs as text (inline buttons only work in channels/supergroups)
+                        # EXACT COPY FROM ORIGINAL FORWARDER bump_service.py line 2560-2561
+                        # "FORWARD the storage message to preserve InlineKeyboardMarkup buttons!"
+                        # "This is how user accounts can send InlineKeyboardMarkup - by forwarding!"
                         # ═══════════════════════════════════════════════════════════════════════════
                         sent_msg = None
-                        message_text = original_message.message or ''
                         
-                        # ALWAYS add button URLs as text (like original forwarder line 2109)
-                        # This works everywhere, inline buttons only work in channels/supergroups
-                        button_text = ""
-                        for button_row in telethon_buttons:
-                            for button in button_row:
-                                if hasattr(button, 'url'):
-                                    button_text += f"\n\n🔗 {button.text}: {button.url}"
+                        # Check if this message was created by bot with inline buttons
+                        is_bot_created = ad_content.get('bot_created_with_buttons', False)
                         
-                        final_message = (message_text or "") + button_text
-                        
-                        logger.info(f"📤 SENDING message with buttons to {chat_entity.title}")
-                        
-                        try:
-                            # Send with BOTH: text buttons (always work) + inline buttons (work in channels/supergroups)
-                            if original_message.media:
-                                sent_msg = await client.send_file(
-                                    chat_entity,
-                                    original_message.media,
-                                    caption=final_message,
-                                    buttons=telethon_buttons  # Try inline buttons for channels/supergroups
+                        if is_bot_created:
+                            # FORWARD the bot-created message - this preserves inline buttons!
+                            logger.info(f"🔄 FORWARDING bot message with inline buttons to {chat_entity.title}")
+                            try:
+                                sent_msg = await client.forward_messages(
+                                    entity=chat_entity,
+                                    messages=bridge_message_id,
+                                    from_peer=bridge_entity
                                 )
-                            else:
-                                sent_msg = await client.send_message(
-                                    chat_entity,
-                                    final_message,
-                                    buttons=telethon_buttons  # Try inline buttons for channels/supergroups
-                                )
-                            logger.info(f"✅ Sent message with buttons to {chat_entity.title}")
-                        except Exception as send_error:
-                            logger.warning(f"⚠️ Send with buttons failed: {send_error}, trying without inline")
+                                logger.info(f"✅ Forwarded message WITH INLINE BUTTONS to {chat_entity.title}")
+                            except Exception as fwd_err:
+                                logger.warning(f"⚠️ Forward failed: {fwd_err}, falling back to send")
+                                is_bot_created = False  # Fall through to send method
+                        
+                        if not is_bot_created:
+                            # Fallback: Send with text-based buttons
+                            message_text = original_message.message or ''
+                            button_text = ""
+                            for button_row in telethon_buttons:
+                                for button in button_row:
+                                    if hasattr(button, 'url'):
+                                        button_text += f"\n\n🔗 {button.text}: {button.url}"
+                            
+                            final_message = (message_text or "") + button_text
+                            
+                            logger.info(f"📤 SENDING message with text buttons to {chat_entity.title}")
                             try:
                                 if original_message.media:
-                                    sent_msg = await client.send_file(chat_entity, original_message.media, caption=final_message)
+                                    sent_msg = await client.send_file(
+                                        chat_entity,
+                                        original_message.media,
+                                        caption=final_message,
+                                        buttons=telethon_buttons
+                                    )
                                 else:
-                                    sent_msg = await client.send_message(chat_entity, final_message)
-                                logger.info(f"✅ Sent message with text buttons to {chat_entity.title}")
-                            except Exception as fallback_error:
-                                logger.error(f"❌ Failed to send to {chat_entity.title}: {fallback_error}")
+                                    sent_msg = await client.send_message(
+                                        chat_entity,
+                                        final_message,
+                                        buttons=telethon_buttons
+                                    )
+                                logger.info(f"✅ Sent message with buttons to {chat_entity.title}")
+                            except Exception as send_error:
+                                logger.warning(f"⚠️ Send failed: {send_error}")
+                                try:
+                                    if original_message.media:
+                                        sent_msg = await client.send_file(chat_entity, original_message.media, caption=final_message)
+                                    else:
+                                        sent_msg = await client.send_message(chat_entity, final_message)
+                                    logger.info(f"✅ Sent with text buttons to {chat_entity.title}")
+                                except Exception as fallback_error:
+                                    logger.error(f"❌ Failed to send to {chat_entity.title}: {fallback_error}")
                         
                         if sent_msg:
                             sent_count += 1

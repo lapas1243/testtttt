@@ -1223,11 +1223,73 @@ async def _save_campaign_from_message(update: Update, user_id: int, session: dic
         buttons = data.get('buttons', [])
         ad_content = data['ad_content']
         
-        # Log buttons info - they will be sent directly by userbot (like original forwarder)
+        # If we have buttons, have the main BOT post message WITH buttons to storage channel
+        # Then userbot will FORWARD it - this preserves inline buttons!
         if buttons and len(buttons) > 0:
-            logger.info(f"🔘 Campaign has {len(buttons)} buttons - will send directly with userbot")
-            for btn in buttons:
-                logger.info(f"   📎 {btn.get('text', '?')} -> {btn.get('url', '?')}")
+            logger.info(f"🔘 Campaign has {len(buttons)} buttons - BOT will create message with inline buttons")
+            
+            try:
+                bot = update.get_bot()
+                if bot:
+                    # Fix button URLs first
+                    fixed_buttons = []
+                    for btn in buttons:
+                        btn_url = btn.get('url', '')
+                        if btn_url:
+                            # Fix malformed URLs
+                            btn_url = btn_url.replace('https:/', 'https://').replace('http:/', 'http://')
+                            while 'https://https://' in btn_url or 'http://http://' in btn_url:
+                                btn_url = btn_url.replace('https://https://', 'https://').replace('http://http://', 'http://')
+                            if not btn_url.startswith('http://') and not btn_url.startswith('https://'):
+                                btn_url = 'https://' + btn_url
+                            fixed_buttons.append({'text': btn.get('text', 'Click'), 'url': btn_url})
+                            logger.info(f"   📎 {btn.get('text', '?')} -> {btn_url}")
+                    
+                    # Build inline keyboard
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    keyboard = []
+                    row = []
+                    for btn in fixed_buttons:
+                        row.append(InlineKeyboardButton(btn['text'], url=btn['url']))
+                        if len(row) == 2:
+                            keyboard.append(row)
+                            row = []
+                    if row:
+                        keyboard.append(row)
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    # Get channel info from ad_content
+                    bridge_channel = ad_content.get('bridge_channel_entity') or ad_content.get('chat_id')
+                    bridge_msg_id = ad_content.get('bridge_message_id') or ad_content.get('message_id')
+                    
+                    if bridge_channel and bridge_msg_id:
+                        logger.info(f"🤖 BOT: Creating message with {len(fixed_buttons)} inline buttons...")
+                        try:
+                            # Copy the original message WITH inline buttons added by bot
+                            copied_msg = await bot.copy_message(
+                                chat_id=bridge_channel,
+                                from_chat_id=bridge_channel,
+                                message_id=bridge_msg_id,
+                                reply_markup=reply_markup
+                            )
+                            new_msg_id = copied_msg.message_id
+                            logger.info(f"✅ BOT created message #{new_msg_id} with inline buttons!")
+                            
+                            # Update ad_content to point to the NEW bot-created message
+                            ad_content = {
+                                'bridge_channel': True,
+                                'bridge_channel_entity': bridge_channel,
+                                'bridge_message_id': new_msg_id,
+                                'bot_created_with_buttons': True
+                            }
+                        except Exception as copy_err:
+                            logger.error(f"❌ BOT copy_message failed: {copy_err}")
+                            logger.info("Will use text-based buttons as fallback")
+                    
+                    # Store fixed buttons for fallback
+                    buttons = fixed_buttons
+            except Exception as e:
+                logger.error(f"❌ Error creating bot message: {e}")
         
         campaign_id = bump_service.add_campaign(
             user_id=user_id,
