@@ -2079,15 +2079,25 @@ class BumpService:
                         
                         # Build button text (clickable links that work everywhere)
                         button_text = ""
-                        if telethon_buttons:
+                        
+                        # FIXED: Get button info directly from campaign data (buttons list)
+                        # since telethon_buttons are Button objects that may not expose .text/.url directly
+                        if buttons and len(buttons) > 0:
                             button_text = "\n\n━━━━━━━━━━━━━━━━━"
-                            for row in telethon_buttons:
-                                for btn in row:
-                                    if hasattr(btn, 'url'):
-                                        button_text += f"\n🔗 {btn.text}: {btn.url}"
+                            for btn in buttons:
+                                btn_text = btn.get('text', 'Click Here')
+                                btn_url = btn.get('url', '')
+                                if btn_url:
+                                    if not btn_url.startswith('http://') and not btn_url.startswith('https://'):
+                                        btn_url = 'https://' + btn_url
+                                    button_text += f"\n🔗 {btn_text}: {btn_url}"
+                                    logger.info(f"📝 Button text added: {btn_text} -> {btn_url}")
+                        
+                        logger.info(f"📝 Button text to append: '{button_text[:100]}...' (len={len(button_text)})")
                         
                         # Combine caption with button URLs as text
                         final_caption = (original_message.message or '') + button_text
+                        logger.info(f"📝 Final caption length: {len(final_caption)} chars")
                         
                         try:
                             if original_message.media:
@@ -2148,14 +2158,17 @@ class BumpService:
                                 original_message = await client.get_messages(storage_entity, ids=int(storage_msg_id))
                                 
                                 if original_message:
-                                    # Build button text (clickable links)
+                                    # Build button text (clickable links) from campaign buttons
                                     button_text = ""
-                                    if telethon_buttons:
+                                    if buttons and len(buttons) > 0:
                                         button_text = "\n\n━━━━━━━━━━━━━━━━━"
-                                        for row in telethon_buttons:
-                                            for btn in row:
-                                                if hasattr(btn, 'url'):
-                                                    button_text += f"\n🔗 {btn.text}: {btn.url}"
+                                        for btn in buttons:
+                                            btn_text = btn.get('text', 'Click Here')
+                                            btn_url = btn.get('url', '')
+                                            if btn_url:
+                                                if not btn_url.startswith('http://') and not btn_url.startswith('https://'):
+                                                    btn_url = 'https://' + btn_url
+                                                button_text += f"\n🔗 {btn_text}: {btn_url}"
                                     
                                     final_caption = (original_message.message or '') + button_text
                                     
