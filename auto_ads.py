@@ -1222,11 +1222,11 @@ async def _save_campaign_from_message(update: Update, user_id: int, session: dic
             logger.info(f"🔘 Campaign has {len(buttons)} buttons - attempting to create bot message with inline buttons")
             
             try:
-                # Get the bot instance from the global telegram_apps
-                from main import telegram_apps
-                if telegram_apps and len(telegram_apps) > 0:
-                    bot = telegram_apps[0].bot
-                    logger.info(f"🤖 Using bot: @{(await bot.get_me()).username}")
+                # Get the bot from the update object (always available)
+                bot = update.get_bot()
+                if bot:
+                    bot_info = await bot.get_me()
+                    logger.info(f"🤖 Using bot: @{bot_info.username} (ID: {bot_info.id})")
                     
                     ad_content = await _create_bot_message_with_buttons(ad_content, buttons, bot)
                     
@@ -1235,7 +1235,7 @@ async def _save_campaign_from_message(update: Update, user_id: int, session: dic
                     else:
                         logger.warning(f"⚠️ Bot couldn't create message with buttons - will use text fallback")
                 else:
-                    logger.error("❌ No telegram_apps available to create bot message")
+                    logger.error("❌ No bot available from update")
             except Exception as e:
                 logger.error(f"❌ Error creating bot message: {e}")
                 import traceback

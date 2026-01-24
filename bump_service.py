@@ -2040,7 +2040,7 @@ class BumpService:
                             sent_msg = await client.forward_messages(
                                 entity=chat_entity,
                                 messages=bridge_message_id,
-                                from_peer=storage_channel_entity
+                                from_peer=bridge_entity  # Use bridge_entity, not storage_channel_entity
                             )
                             logger.info(f"✅ Forwarded to {chat_entity.title}")
                         except Exception as fwd_err:
