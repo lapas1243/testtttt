@@ -1119,6 +1119,92 @@ async def handle_auto_ads_message(update: Update, context: ContextTypes.DEFAULT_
     
     return False
 
+async def _create_bot_message_with_buttons(ad_content: dict, buttons: list, context) -> dict:
+    """
+    Have the main bot create a message WITH inline buttons in a storage channel.
+    This is necessary because userbots cannot add inline buttons to messages.
+    The userbot will then FORWARD this message, preserving the buttons.
+    """
+    if not buttons or len(buttons) == 0:
+        return ad_content  # No buttons, return original
+    
+    try:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        
+        # Get the original message content
+        bridge_channel = ad_content.get('bridge_channel_entity') or ad_content.get('chat_id')
+        bridge_msg_id = ad_content.get('bridge_message_id') or ad_content.get('message_id')
+        
+        if not bridge_channel or not bridge_msg_id:
+            logger.error("Missing bridge channel info for bot message creation")
+            return ad_content
+        
+        # Build inline keyboard from buttons
+        keyboard = []
+        row = []
+        for i, btn in enumerate(buttons):
+            btn_text = btn.get('text', 'Click Here')
+            btn_url = btn.get('url', '')
+            if btn_url:
+                if not btn_url.startswith('http://') and not btn_url.startswith('https://'):
+                    btn_url = 'https://' + btn_url
+                row.append(InlineKeyboardButton(btn_text, url=btn_url))
+                # 2 buttons per row max
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+        if row:
+            keyboard.append(row)
+        
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        
+        if not reply_markup:
+            logger.warning("No valid buttons created, returning original ad_content")
+            return ad_content
+        
+        # Use the main bot to fetch and re-send the message with buttons
+        bot = context.bot
+        
+        # The storage channel should be the same bridge channel
+        # We'll send the bot's message there so the userbot can forward it
+        storage_channel = bridge_channel
+        
+        logger.info(f"🤖 BOT: Creating message with {len(buttons)} inline buttons in {storage_channel}")
+        
+        # Try to copy the original message with buttons added
+        try:
+            # Copy the message to the same channel but with buttons added
+            copied_msg = await bot.copy_message(
+                chat_id=storage_channel,
+                from_chat_id=storage_channel,
+                message_id=bridge_msg_id,
+                reply_markup=reply_markup
+            )
+            
+            new_msg_id = copied_msg.message_id
+            logger.info(f"✅ BOT: Created message {new_msg_id} with inline buttons!")
+            
+            # Return updated ad_content pointing to the NEW message with buttons
+            return {
+                'bridge_channel': True,
+                'bridge_channel_entity': storage_channel,
+                'bridge_message_id': new_msg_id,
+                'bot_created': True,  # Flag that this is a bot-created message with buttons
+                'original_message_id': bridge_msg_id,
+                'original_chat_id': storage_channel,
+                'has_buttons': True
+            }
+            
+        except Exception as copy_err:
+            logger.error(f"❌ BOT copy_message failed: {copy_err}")
+            # Fallback: Try forward + edit doesn't work for buttons
+            # Just return original, buttons will be text-based
+            return ad_content
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to create bot message with buttons: {e}")
+        return ad_content
+
 async def _save_campaign_from_message(update: Update, user_id: int, session: dict):
     """Save campaign to database (called from message handler)"""
     data = session['data']
@@ -1127,12 +1213,38 @@ async def _save_campaign_from_message(update: Update, user_id: int, session: dic
     try:
         target_mode = data.get('target_mode', 'specific')
         buttons = data.get('buttons', [])
+        ad_content = data['ad_content']
+        
+        # If we have buttons, have the main bot create a message with inline buttons
+        if buttons and len(buttons) > 0 and update.effective_message:
+            from telegram.ext import ContextTypes
+            # Get context from the update - we need the bot instance
+            logger.info(f"🔘 Campaign has {len(buttons)} buttons - creating bot message with inline buttons")
+            
+            # We need to pass context, but we don't have it directly here
+            # Store buttons info and the ad_content will be processed when campaign runs
+            # with forward_messages preserving the layout
+            
+            # Actually, we can use the global bot instance
+            from main import telegram_apps
+            if telegram_apps:
+                # Use the first bot's context
+                bot = telegram_apps[0].bot
+                
+                # Create a mock context with just the bot
+                class MockContext:
+                    def __init__(self, bot):
+                        self.bot = bot
+                
+                mock_context = MockContext(bot)
+                ad_content = await _create_bot_message_with_buttons(ad_content, buttons, mock_context)
+                logger.info(f"✅ Ad content updated with bot-created message: {ad_content.get('bridge_message_id')}")
         
         campaign_id = bump_service.add_campaign(
             user_id=user_id,
             account_id=data['account_id'],
             campaign_name=data['campaign_name'],
-            ad_content=data['ad_content'],
+            ad_content=ad_content,
             target_chats=data['target_chats'],
             schedule_type=data.get('schedule_type', 'hourly'),
             schedule_time=data.get('schedule_time'),
