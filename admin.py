@@ -9205,7 +9205,7 @@ async def handle_recover_single_confirm(update: Update, context: ContextTypes.DE
 
 # --- Export Users to CSV ---
 async def handle_adm_export_users(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
-    """Exports all bot users to a CSV file with user IDs and usernames."""
+    """Exports all bot users usernames to a CSV file."""
     query = update.callback_query
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -9214,25 +9214,26 @@ async def handle_adm_export_users(update: Update, context: ContextTypes.DEFAULT_
         return await query.answer("Access denied.", show_alert=True)
     
     await query.answer("Generating CSV file...")
-    await query.edit_message_text("⏳ Exporting users to CSV...\n\nPlease wait...", parse_mode=None)
+    await query.edit_message_text("⏳ Exporting usernames to CSV...\n\nPlease wait...", parse_mode=None)
     
     conn = None
     try:
         conn = get_db_connection()
         c = conn.cursor()
         
-        # Get all users
+        # Get all users with usernames only
         c.execute("""
-            SELECT user_id, username, balance, total_purchases, language, is_banned, is_reseller, last_active
+            SELECT username
             FROM users
-            ORDER BY user_id
+            WHERE username IS NOT NULL AND username != ''
+            ORDER BY username
         """)
         users = c.fetchall()
         
         if not users:
             keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="admin_menu")]]
             return await query.edit_message_text(
-                "❌ No users found in the database.",
+                "❌ No users with usernames found in the database.",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=None
             )
@@ -9245,20 +9246,13 @@ async def handle_adm_export_users(update: Update, context: ContextTypes.DEFAULT_
         writer = csv.writer(output)
         
         # Write header
-        writer.writerow(['User ID', 'Username', 'Balance', 'Total Purchases', 'Language', 'Is Banned', 'Is Reseller', 'Last Active'])
+        writer.writerow(['Username'])
         
-        # Write user data
+        # Write usernames only
         for user in users:
-            writer.writerow([
-                user['user_id'],
-                user['username'] or 'N/A',
-                user['balance'] or 0,
-                user['total_purchases'] or 0,
-                user['language'] or 'en',
-                'Yes' if user['is_banned'] else 'No',
-                'Yes' if user['is_reseller'] else 'No',
-                user['last_active'] or 'N/A'
-            ])
+            username = user['username']
+            if username:
+                writer.writerow([username])
         
         # Get the CSV content
         csv_content = output.getvalue()
@@ -9266,15 +9260,15 @@ async def handle_adm_export_users(update: Update, context: ContextTypes.DEFAULT_
         
         # Create file bytes
         file_bytes = io.BytesIO(csv_content.encode('utf-8'))
-        file_bytes.name = f"bot_users_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        file_bytes.name = f"bot_usernames_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         
         # Send the file
         await context.bot.send_document(
             chat_id=chat_id,
             document=file_bytes,
             filename=file_bytes.name,
-            caption=f"📥 **Bot Users Export**\n\n"
-                    f"Total Users: {len(users)}\n"
+            caption=f"📥 **Bot Usernames Export**\n\n"
+                    f"Total Usernames: {len(users)}\n"
                     f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             parse_mode="Markdown"
         )
@@ -9282,17 +9276,17 @@ async def handle_adm_export_users(update: Update, context: ContextTypes.DEFAULT_
         keyboard = [[InlineKeyboardButton("⬅️ Back to Admin Menu", callback_data="admin_menu")]]
         await query.edit_message_text(
             f"✅ **Export Complete!**\n\n"
-            f"Exported {len(users)} users to CSV file.\n"
+            f"Exported {len(users)} usernames to CSV file.\n"
             f"The file has been sent above.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
         
     except Exception as e:
-        logger.error(f"Error exporting users: {e}", exc_info=True)
+        logger.error(f"Error exporting usernames: {e}", exc_info=True)
         keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="admin_menu")]]
         await query.edit_message_text(
-            f"❌ Error exporting users: {str(e)[:100]}",
+            f"❌ Error exporting usernames: {str(e)[:100]}",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=None
         )
