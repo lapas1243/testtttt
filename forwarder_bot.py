@@ -1,21 +1,5 @@
 """
-TgCF Pro - Enterprise Telegram Bot Interface
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Professional Telegram bot interface providing intuitive user interactions
-for enterprise-grade automation and campaign management.
-
-Features:
-- Multi-account management with streamlined setup
-- Advanced campaign creation and scheduling
-- Real-time performance monitoring and analytics
-- Enterprise security with access control
-- Professional UI/UX with inline keyboards
-
-Author: TgCF Pro Team
-License: MIT
-Version: 1.0.0
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Forwarder Bot Interface Module
 """
 
 import asyncio
@@ -34,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class TgcfBot:
+class ForwarderBot:
     def escape_markdown(self, text):
         """Escape special Markdown characters"""
         if not text:
@@ -293,11 +277,11 @@ class TgcfBot:
         self.db.add_user(user.id, user.username, user.first_name, user.last_name)
         
         welcome_text = """
-🚀 **Welcome to TgCF Pro**
+🚀 **Welcome to Auto Ads System**
 
-*Enterprise Telegram Automation Platform*
+*Telegram Automation Platform*
 
-**Professional Features:**
+**Features:**
 • 🏢 Multi-Account Management - Unlimited work accounts
 • 📢 Smart Bump Service - Advanced campaign automation  
 • ⚡ Real-time Forwarding - Lightning-fast message processing
@@ -326,7 +310,7 @@ class TgcfBot:
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command"""
         help_text = """
-📖 **TgCF Bot Help**
+📖 **Auto Ads Bot Help**
 
 **Commands:**
 /start - Start the bot and show main menu
@@ -515,7 +499,7 @@ class TgcfBot:
         reply_markup = self.get_main_menu_keyboard()
         
         await query.edit_message_text(
-            "🤖 **TgCF Bot - Main Menu**\n\nChoose an option:",
+            "🤖 **Auto Ads - Main Menu**\n\nChoose an option:",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=reply_markup
         )
@@ -1769,10 +1753,10 @@ Buttons will appear as an inline keyboard below your ad message."""
                     logger.info(f"✅ Created {len(buttons_data)} campaign buttons for immediate execution")
                 except Exception as e:
                     logger.error(f"❌ Error creating campaign buttons: {e}")
-                    telethon_buttons = [[Button.url("Shop Now", "https://t.me/testukassdfdds")]]
+                    telethon_buttons = [[Button.url("Shop Now", "https://t.me/example")]]
             else:
                 # Default button if none specified
-                telethon_buttons = [[Button.url("Shop Now", "https://t.me/testukassdfdds")]]
+                telethon_buttons = [[Button.url("Shop Now", "https://t.me/example")]]
                 logger.info("Using default Shop Now button for immediate execution")
             
             # Get all dialogs and find groups (use entities instead of IDs)
@@ -2044,7 +2028,7 @@ Error: {str(exec_error)[:100]}
             buttons_data = campaign_data.get('buttons', [])
             if not buttons_data:
                 # Fallback to default button if none specified
-                buttons_data = [{"text": "Shop Now", "url": "https://t.me/testukassdfdds"}]
+                buttons_data = [{"text": "Shop Now", "url": "https://t.me/example"}]
                 logger.info(f"Using default button data: {buttons_data}")
             else:
                 logger.info(f"Using campaign button data: {buttons_data}")
@@ -2077,7 +2061,7 @@ Error: {str(exec_error)[:100]}
                 except Exception as e:
                     logger.error(f"❌ Error creating buttons from campaign data: {e}")
                     # Fallback to default button
-                    telethon_buttons = [[Button.url("Shop Now", "https://t.me/testukassdfdds")]]
+                    telethon_buttons = [[Button.url("Shop Now", "https://t.me/example")]]
                     logger.info("Using fallback Shop Now button")
             
             for chat_entity in target_chats:
@@ -2294,7 +2278,6 @@ Buttons will appear as an inline keyboard below your ad message.
 
 **Need more help?**
 • Check the web interface for detailed guides
-• Join our support group: @tgcf_support
         """
         
         keyboard = [
@@ -4079,7 +4062,7 @@ Targets: {len(enhanced_campaign_data['target_chats'])} chat(s)
         application.post_init = self.setup_bot_commands
         
         # Start the bot
-        logger.info("Starting TgCF Bot...")
+        logger.info("Starting Auto Ads Bot...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
@@ -4183,9 +4166,9 @@ This name will help you identify the account when managing campaigns.
         application.add_handler(MessageHandler(filters.VIDEO, self.handle_message))
         
         # Start the bot
-        logger.info("Starting TgCF Bot...")
+        logger.info("Starting Auto Ads Bot...")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
-    bot = TgcfBot()
+    bot = ForwarderBot()
     bot.run()

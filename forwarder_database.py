@@ -1,21 +1,5 @@
 """
-TgCF Pro - Enterprise Database Management
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Professional database layer providing secure data persistence, account management,
-campaign storage, and performance analytics for enterprise automation.
-
-Features:
-- Secure SQLite database with encryption support
-- Multi-account data management
-- Campaign and performance tracking
-- Automated backup and recovery systems
-- Enterprise-grade data validation
-
-Author: TgCF Pro Team
-License: MIT
-Version: 1.0.0
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Database Management Module
 """
 import sqlite3
 import json

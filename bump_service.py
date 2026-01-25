@@ -1,22 +1,5 @@
 ﻿"""
-TgCF Pro - Smart Bump Service Engine
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Enterprise-grade automated advertising and campaign management system.
-Provides intelligent scheduling, multi-target broadcasting, and comprehensive
-performance analytics for business communication automation.
-
-Features:
-- Advanced campaign scheduling with multiple patterns
-- Multi-account campaign management
-- Real-time performance tracking and analytics
-- Intelligent retry mechanisms and error handling
-- Professional campaign templates and A/B testing
-
-Author: TgCF Pro Team
-License: MIT
-Version: 1.0.0
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Bump Service Engine - Automated Campaign Management
 """
 
 import asyncio
@@ -1167,7 +1150,7 @@ class BumpService:
                 logger.info("Added content_variations column to ad_campaigns table")
             
             # Update existing campaigns with default values and ensure they're active
-            cursor.execute("UPDATE ad_campaigns SET buttons = ? WHERE buttons IS NULL", (json.dumps([{"text": "Shop Now", "url": "https://t.me/testukassdfdds"}]),))
+            cursor.execute("UPDATE ad_campaigns SET buttons = ? WHERE buttons IS NULL", (json.dumps([{"text": "Shop Now", "url": "https://t.me/example"}]),))
             cursor.execute("UPDATE ad_campaigns SET target_mode = 'all_groups' WHERE target_mode IS NULL")
             cursor.execute("UPDATE ad_campaigns SET immediate_start = 0 WHERE immediate_start IS NULL")
             cursor.execute("UPDATE ad_campaigns SET is_active = 1 WHERE is_active IS NULL OR is_active = 0")
@@ -1988,9 +1971,9 @@ class BumpService:
                 logger.info(f"✅ Created {len(buttons)} buttons in {len(button_rows)} rows")
             except Exception as e:
                 logger.error(f"❌ Error creating buttons: {e}")
-                telethon_buttons = [[Button.url("Shop Now", "https://t.me/testukassdfdds")]]
+                telethon_buttons = [[Button.url("Shop Now", "https://t.me/example")]]
         else:
-            telethon_buttons = [[Button.url("Shop Now", "https://t.me/testukassdfdds")]]
+            telethon_buttons = [[Button.url("Shop Now", "https://t.me/example")]]
             logger.info("Using default Shop Now button")
         
         # ═══════════════════════════════════════════════════════════════════════════
