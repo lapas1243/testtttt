@@ -2163,25 +2163,12 @@ class BumpService:
                 await asyncio.sleep(random.uniform(1, 3))
                 continue
         
-        # 🎯 HUMAN-LIKE BEHAVIOR: After forwarding to all groups, wait like a human would
-        # A human doesn't wait between each forward, but waits after finishing the batch
+        # Log completion - scheduler handles when to run next (no blocking delay here)
         if sent_count > 0:
             logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            logger.info(f"✅ Forwarded to {sent_count} groups successfully!")
-            logger.info(f"⏳ Now waiting before next campaign (like a human would)")
+            logger.info(f"✅ Sent to {sent_count} groups successfully!")
+            logger.info(f"⏰ Next run will be according to campaign schedule")
             logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            
-            # Check if in warm-up mode and use appropriate delay
-            is_warmup, _ = self._is_account_in_warmup(account_id)
-            if is_warmup:
-                safe_delay = self._get_warmup_delay()  # 30-45 minute delays
-                logger.info(f"🆕 WARM-UP MODE: Waiting {safe_delay/60:.1f} minutes before next campaign")
-            else:
-                # Normal mode: wait 1-1.5 hours after completing all forwards (like a human would)
-                safe_delay = random.uniform(3600, 5400)  # 60-90 minutes (1-1.5 hours)
-                logger.info(f"🛡️ ANTI-BAN: Waiting {safe_delay/60:.1f} minutes ({safe_delay/3600:.1f} hours) before next campaign")
-            
-            await asyncio.sleep(safe_delay)
         
         # Update campaign statistics
         self.update_campaign_stats(campaign_id, sent_count)
