@@ -562,7 +562,7 @@ async def handle_adm_products_submenu(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     user_id = update.effective_user.id
     
-    if not is_admin(user_id):
+    if not is_primary_admin(user_id):
         await query.answer("Access denied.", show_alert=True)
         return
     
@@ -587,7 +587,7 @@ async def handle_adm_geography_submenu(update: Update, context: ContextTypes.DEF
     query = update.callback_query
     user_id = update.effective_user.id
     
-    if not is_admin(user_id):
+    if not is_primary_admin(user_id):
         await query.answer("Access denied.", show_alert=True)
         return
     
@@ -607,7 +607,7 @@ async def handle_adm_users_submenu(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     user_id = update.effective_user.id
     
-    if not is_admin(user_id):
+    if not is_primary_admin(user_id):
         await query.answer("Access denied.", show_alert=True)
         return
     
@@ -627,7 +627,7 @@ async def handle_adm_discounts_submenu(update: Update, context: ContextTypes.DEF
     query = update.callback_query
     user_id = update.effective_user.id
     
-    if not is_admin(user_id):
+    if not is_primary_admin(user_id):
         await query.answer("Access denied.", show_alert=True)
         return
     
@@ -646,7 +646,7 @@ async def handle_adm_comms_submenu(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     user_id = update.effective_user.id
     
-    if not is_admin(user_id):
+    if not is_primary_admin(user_id):
         await query.answer("Access denied.", show_alert=True)
         return
     
@@ -666,7 +666,7 @@ async def handle_adm_tools_submenu(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     user_id = update.effective_user.id
     
-    if not is_admin(user_id):
+    if not is_primary_admin(user_id):
         await query.answer("Access denied.", show_alert=True)
         return
     
