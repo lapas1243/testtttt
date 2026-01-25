@@ -295,6 +295,13 @@ def callback_query_router(func):
 
                 # Primary Admin Handlers (from admin.py)
                 "admin_menu": admin.handle_admin_menu,
+                # Admin Sub-Menus
+                "adm_products_submenu": admin.handle_adm_products_submenu,
+                "adm_geography_submenu": admin.handle_adm_geography_submenu,
+                "adm_users_submenu": admin.handle_adm_users_submenu,
+                "adm_discounts_submenu": admin.handle_adm_discounts_submenu,
+                "adm_comms_submenu": admin.handle_adm_comms_submenu,
+                "adm_tools_submenu": admin.handle_adm_tools_submenu,
                 "sales_analytics_menu": admin.handle_sales_analytics_menu, "sales_dashboard": admin.handle_sales_dashboard,
                 "sales_select_period": admin.handle_sales_select_period, "sales_run": admin.handle_sales_run,
                 "adm_city": admin.handle_adm_city, "adm_dist": admin.handle_adm_dist, "adm_type": admin.handle_adm_type,

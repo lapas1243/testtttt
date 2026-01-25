@@ -498,41 +498,42 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     total_user_balance_str = format_currency(total_user_balance)
     total_sales_value_str = format_currency(total_sales_value)
     msg = (
-       f"🔧 Admin Dashboard (Primary)\n\n"
-       f"👥 Total Users: {total_users}\n"
-       f"💰 Sum of User Balances: {total_user_balance_str} EUR\n"
-       f"📈 Total Sales Value: {total_sales_value_str} EUR\n"
-       f"📦 Active Products: {active_products}\n\n"
-       "Select an action:"
+       f"🔧 **Admin Dashboard**\n\n"
+       f"👥 Users: **{total_users}**\n"
+       f"💰 Balances: **{total_user_balance_str}** EUR\n"
+       f"📈 Sales: **{total_sales_value_str}** EUR\n"
+       f"📦 Products: **{active_products}**\n\n"
+       "Select a category:"
     )
 
     keyboard = [
-        [InlineKeyboardButton("📊 Sales Analytics", callback_data="sales_analytics_menu")],
-        [InlineKeyboardButton("🔍 Recent Purchases", callback_data="adm_recent_purchases|0")],
-        [InlineKeyboardButton("➕ Add Products", callback_data="adm_city")],
-        [InlineKeyboardButton("📦 Bulk Add Products", callback_data="adm_bulk_city")],
-        [InlineKeyboardButton("🗑️ Manage Products", callback_data="adm_manage_products")],
-        [InlineKeyboardButton("🔍 Search User", callback_data="adm_search_user_start")],
-        [InlineKeyboardButton("👑 Manage Resellers", callback_data="manage_resellers_menu")],
-        [InlineKeyboardButton("🏷️ Manage Reseller Discounts", callback_data="manage_reseller_discounts_select_reseller|0")],
-        [InlineKeyboardButton("🏷️ Manage Discount Codes", callback_data="adm_manage_discounts")],
-        [InlineKeyboardButton("👋 Manage Welcome Msg", callback_data="adm_manage_welcome|0")],
-        [InlineKeyboardButton("📦 View Bot Stock", callback_data="view_stock")],
-        [InlineKeyboardButton("📜 View Added Products Log", callback_data="viewer_added_products|0")],
-        [InlineKeyboardButton("🗺️ Manage Districts", callback_data="adm_manage_districts")],
-        [InlineKeyboardButton("🏙️ Manage Cities", callback_data="adm_manage_cities")],
-        [InlineKeyboardButton("🧩 Manage Product Types", callback_data="adm_manage_types")],
-        [InlineKeyboardButton("🔄 Reassign Product Type", callback_data="adm_reassign_type_start")], # <<< MODIFIED: Already existed
-        [InlineKeyboardButton("🚫 Manage Reviews", callback_data="adm_manage_reviews|0")],
-        [InlineKeyboardButton("🧹 Clear ALL Reservations", callback_data="adm_clear_reservations_confirm")],
-        [InlineKeyboardButton("📢 Broadcast Message", callback_data="adm_broadcast_start")],
-        [InlineKeyboardButton("🔧 Manual Payment Recovery", callback_data="manual_payment_recovery")],
-        [InlineKeyboardButton("💰 Bulk Edit Prices", callback_data="adm_bulk_edit_prices_start")],
-        [InlineKeyboardButton("➕ Add New City", callback_data="adm_add_city")],
-        [InlineKeyboardButton("📸 Set Bot Media", callback_data="adm_set_media")],
-        [InlineKeyboardButton("📢 Auto Ads System", callback_data="auto_ads_menu")],
-        [InlineKeyboardButton("📥 Export Users CSV", callback_data="adm_export_users")],
-        [InlineKeyboardButton("🏠 User Home Menu", callback_data="back_start")]
+        # Row 1: Quick Stats
+        [InlineKeyboardButton("📊 Analytics", callback_data="sales_analytics_menu"),
+         InlineKeyboardButton("🔍 Purchases", callback_data="adm_recent_purchases|0")],
+        
+        # Row 2: Products
+        [InlineKeyboardButton("📦 Products Menu", callback_data="adm_products_submenu")],
+        
+        # Row 3: Geography
+        [InlineKeyboardButton("🗺️ Geography Menu", callback_data="adm_geography_submenu")],
+        
+        # Row 4: Users
+        [InlineKeyboardButton("👥 Users Menu", callback_data="adm_users_submenu")],
+        
+        # Row 5: Discounts
+        [InlineKeyboardButton("🏷️ Discounts Menu", callback_data="adm_discounts_submenu")],
+        
+        # Row 6: Communications
+        [InlineKeyboardButton("📢 Communications", callback_data="adm_comms_submenu")],
+        
+        # Row 7: Tools
+        [InlineKeyboardButton("🔧 Tools & Settings", callback_data="adm_tools_submenu")],
+        
+        # Row 8: Auto Ads
+        [InlineKeyboardButton("📣 Auto Ads System", callback_data="auto_ads_menu")],
+        
+        # Row 9: Home
+        [InlineKeyboardButton("🏠 User Home", callback_data="back_start")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -550,6 +551,135 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             await send_message_with_retry(context.bot, chat_id, msg, reply_markup=reply_markup, parse_mode=None)
     else:
         await send_message_with_retry(context.bot, chat_id, msg, reply_markup=reply_markup, parse_mode=None)
+
+
+# ============================================================================
+# ADMIN SUB-MENUS - Organized category menus
+# ============================================================================
+
+async def handle_adm_products_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """📦 Products sub-menu"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await query.answer("Access denied.", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    msg = "📦 **Products Management**\n\nChoose an action:"
+    keyboard = [
+        [InlineKeyboardButton("➕ Add Products", callback_data="adm_city")],
+        [InlineKeyboardButton("📦 Bulk Add Products", callback_data="adm_bulk_city")],
+        [InlineKeyboardButton("🗑️ Manage Products", callback_data="adm_manage_products")],
+        [InlineKeyboardButton("📊 View Bot Stock", callback_data="view_stock")],
+        [InlineKeyboardButton("📜 Added Products Log", callback_data="viewer_added_products|0")],
+        [InlineKeyboardButton("🧩 Manage Product Types", callback_data="adm_manage_types")],
+        [InlineKeyboardButton("🔄 Reassign Product Type", callback_data="adm_reassign_type_start")],
+        [InlineKeyboardButton("💰 Bulk Edit Prices", callback_data="adm_bulk_edit_prices_start")],
+        [InlineKeyboardButton("« Back to Admin", callback_data="admin_menu")]
+    ]
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async def handle_adm_geography_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """🗺️ Geography sub-menu"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await query.answer("Access denied.", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    msg = "🗺️ **Geography Management**\n\nManage cities and districts:"
+    keyboard = [
+        [InlineKeyboardButton("🏙️ Manage Cities", callback_data="adm_manage_cities")],
+        [InlineKeyboardButton("➕ Add New City", callback_data="adm_add_city")],
+        [InlineKeyboardButton("🗺️ Manage Districts", callback_data="adm_manage_districts")],
+        [InlineKeyboardButton("« Back to Admin", callback_data="admin_menu")]
+    ]
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async def handle_adm_users_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """👥 Users sub-menu"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await query.answer("Access denied.", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    msg = "👥 **User Management**\n\nManage users and resellers:"
+    keyboard = [
+        [InlineKeyboardButton("🔍 Search User", callback_data="adm_search_user_start")],
+        [InlineKeyboardButton("👑 Manage Resellers", callback_data="manage_resellers_menu")],
+        [InlineKeyboardButton("📥 Export Users CSV", callback_data="adm_export_users")],
+        [InlineKeyboardButton("« Back to Admin", callback_data="admin_menu")]
+    ]
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async def handle_adm_discounts_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """🏷️ Discounts sub-menu"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await query.answer("Access denied.", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    msg = "🏷️ **Discounts Management**\n\nManage discount codes and reseller discounts:"
+    keyboard = [
+        [InlineKeyboardButton("🏷️ Discount Codes", callback_data="adm_manage_discounts")],
+        [InlineKeyboardButton("👑 Reseller Discounts", callback_data="manage_reseller_discounts_select_reseller|0")],
+        [InlineKeyboardButton("« Back to Admin", callback_data="admin_menu")]
+    ]
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async def handle_adm_comms_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """📢 Communications sub-menu"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await query.answer("Access denied.", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    msg = "📢 **Communications**\n\nBroadcast and manage messages:"
+    keyboard = [
+        [InlineKeyboardButton("📢 Broadcast Message", callback_data="adm_broadcast_start")],
+        [InlineKeyboardButton("👋 Welcome Message", callback_data="adm_manage_welcome|0")],
+        [InlineKeyboardButton("🚫 Manage Reviews", callback_data="adm_manage_reviews|0")],
+        [InlineKeyboardButton("« Back to Admin", callback_data="admin_menu")]
+    ]
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async def handle_adm_tools_submenu(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """🔧 Tools & Settings sub-menu"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await query.answer("Access denied.", show_alert=True)
+        return
+    
+    await query.answer()
+    
+    msg = "🔧 **Tools & Settings**\n\nBot configuration and utilities:"
+    keyboard = [
+        [InlineKeyboardButton("📸 Set Bot Media", callback_data="adm_set_media")],
+        [InlineKeyboardButton("🧹 Clear Reservations", callback_data="adm_clear_reservations_confirm")],
+        [InlineKeyboardButton("🔧 Payment Recovery", callback_data="manual_payment_recovery")],
+        [InlineKeyboardButton("« Back to Admin", callback_data="admin_menu")]
+    ]
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 
 # --- Sales Analytics Handlers ---
