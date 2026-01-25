@@ -531,6 +531,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         [InlineKeyboardButton("➕ Add New City", callback_data="adm_add_city")],
         [InlineKeyboardButton("📸 Set Bot Media", callback_data="adm_set_media")],
         [InlineKeyboardButton("📢 Auto Ads System", callback_data="auto_ads_menu")],
+        [InlineKeyboardButton("📥 Export Users CSV", callback_data="adm_export_users")],
         [InlineKeyboardButton("🏠 User Home Menu", callback_data="back_start")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -9200,3 +9201,101 @@ async def handle_recover_single_confirm(update: Update, context: ContextTypes.DE
                 [InlineKeyboardButton("⬅️ Back", callback_data=back_callback)]
             ])
         )
+
+
+# --- Export Users to CSV ---
+async def handle_adm_export_users(update: Update, context: ContextTypes.DEFAULT_TYPE, params=None):
+    """Exports all bot users to a CSV file with user IDs and usernames."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    if not is_primary_admin(user_id):
+        return await query.answer("Access denied.", show_alert=True)
+    
+    await query.answer("Generating CSV file...")
+    await query.edit_message_text("⏳ Exporting users to CSV...\n\nPlease wait...", parse_mode=None)
+    
+    conn = None
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        
+        # Get all users
+        c.execute("""
+            SELECT user_id, username, balance, total_purchases, language, is_banned, is_reseller, last_active
+            FROM users
+            ORDER BY user_id
+        """)
+        users = c.fetchall()
+        
+        if not users:
+            keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="admin_menu")]]
+            return await query.edit_message_text(
+                "❌ No users found in the database.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=None
+            )
+        
+        # Create CSV content
+        import io
+        import csv
+        
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow(['User ID', 'Username', 'Balance', 'Total Purchases', 'Language', 'Is Banned', 'Is Reseller', 'Last Active'])
+        
+        # Write user data
+        for user in users:
+            writer.writerow([
+                user['user_id'],
+                user['username'] or 'N/A',
+                user['balance'] or 0,
+                user['total_purchases'] or 0,
+                user['language'] or 'en',
+                'Yes' if user['is_banned'] else 'No',
+                'Yes' if user['is_reseller'] else 'No',
+                user['last_active'] or 'N/A'
+            ])
+        
+        # Get the CSV content
+        csv_content = output.getvalue()
+        output.close()
+        
+        # Create file bytes
+        file_bytes = io.BytesIO(csv_content.encode('utf-8'))
+        file_bytes.name = f"bot_users_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
+        # Send the file
+        await context.bot.send_document(
+            chat_id=chat_id,
+            document=file_bytes,
+            filename=file_bytes.name,
+            caption=f"📥 **Bot Users Export**\n\n"
+                    f"Total Users: {len(users)}\n"
+                    f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            parse_mode="Markdown"
+        )
+        
+        keyboard = [[InlineKeyboardButton("⬅️ Back to Admin Menu", callback_data="admin_menu")]]
+        await query.edit_message_text(
+            f"✅ **Export Complete!**\n\n"
+            f"Exported {len(users)} users to CSV file.\n"
+            f"The file has been sent above.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error exporting users: {e}", exc_info=True)
+        keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="admin_menu")]]
+        await query.edit_message_text(
+            f"❌ Error exporting users: {str(e)[:100]}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=None
+        )
+    finally:
+        if conn:
+            conn.close()
