@@ -78,6 +78,32 @@ SUPPORTED_CRYPTO = {
 # --------------------------------------------------------------------
 
 
+# --- Helper: Extract basket info for discount validation ---
+def _extract_basket_info(basket: list) -> tuple[list, list, list]:
+    """
+    Extract cities, product types, and sizes from basket items for discount validation.
+    Returns: (basket_cities, basket_product_types, basket_sizes)
+    """
+    basket_cities = []
+    basket_product_types = []
+    basket_sizes = []
+    
+    for item in basket:
+        item_city = item.get('city')
+        if item_city and item_city not in basket_cities:
+            basket_cities.append(item_city)
+        
+        product_type = item.get('product_type', '')
+        if product_type and product_type not in basket_product_types:
+            basket_product_types.append(product_type)
+        
+        item_size = item.get('size')
+        if item_size and item_size not in basket_sizes:
+            basket_sizes.append(item_size)
+    
+    return basket_cities, basket_product_types, basket_sizes
+
+
 # --- Helper Function to Build Start Menu ---
 def _build_start_menu_content(user_id: int, username: str, lang_data: dict, context: ContextTypes.DEFAULT_TYPE) -> tuple[str, InlineKeyboardMarkup]:
     """Builds the text and keyboard for the start menu using provided lang_data."""
@@ -841,7 +867,9 @@ async def handle_add_to_basket(update: Update, context: ContextTypes.DEFAULT_TYP
         if applied_discount_info:
             # Validate general code against the total *after* reseller discount
             # Note: For existing applied discounts, we don't re-validate atomically to avoid double-charging
-            code_valid, _, discount_details = validate_discount_code(applied_discount_info['code'], float(total_after_reseller))
+            # Extract basket info for city/product/size restrictions
+            basket_cities, basket_product_types, basket_sizes = _extract_basket_info(current_basket_list)
+            code_valid, _, discount_details = validate_discount_code(applied_discount_info['code'], float(total_after_reseller), basket_cities, basket_product_types, basket_sizes)
             if code_valid and discount_details:
                 general_discount_amount = Decimal(str(discount_details['discount_amount']))
                 final_total = Decimal(str(discount_details['final_total'])) # validate_discount_code returns final total after THIS code
@@ -1042,8 +1070,10 @@ def validate_discount_code(code_text: str, base_total_float: float, basket_citie
                             logger.info(f"Discount code '{code_data['code']}' only valid for cities: {cities_display}. Basket cities: {basket_cities}")
                             return False, f"This code is only valid for: {cities_display}", None
                     else:
-                        # No basket cities provided but code has restrictions - allow it (will be validated later)
-                        logger.debug(f"Discount code '{code_data['code']}' has city restrictions but no basket cities provided for validation")
+                        # No basket cities provided but code has restrictions - REJECT to prevent bypassing
+                        cities_display = ", ".join(allowed_cities)
+                        logger.warning(f"Discount code '{code_data['code']}' has city restrictions ({cities_display}) but no basket cities provided - rejecting")
+                        return False, f"This code is only valid for: {cities_display}", None
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Invalid allowed_cities JSON for code {code_data['code']}: {e}")
 
@@ -1068,6 +1098,11 @@ def validate_discount_code(code_text: str, base_total_float: float, basket_citie
                             types_display = ", ".join(allowed_product_types)
                             logger.info(f"Discount code '{code_data['code']}' only valid for products: {types_display}. Basket types: {basket_product_types}")
                             return False, f"This code is only valid for: {types_display}", None
+                    else:
+                        # No basket product types provided but code has restrictions - REJECT
+                        types_display = ", ".join(allowed_product_types)
+                        logger.warning(f"Discount code '{code_data['code']}' has product type restrictions ({types_display}) but no basket types provided - rejecting")
+                        return False, f"This code is only valid for: {types_display}", None
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Invalid allowed_product_types JSON for code {code_data['code']}: {e}")
         
@@ -1092,6 +1127,11 @@ def validate_discount_code(code_text: str, base_total_float: float, basket_citie
                             sizes_display = ", ".join(allowed_sizes)
                             logger.info(f"Discount code '{code_data['code']}' only valid for sizes: {sizes_display}. Basket sizes: {basket_sizes}")
                             return False, f"This code is only valid for sizes: {sizes_display}", None
+                    else:
+                        # No basket sizes provided but code has restrictions - REJECT
+                        sizes_display = ", ".join(allowed_sizes)
+                        logger.warning(f"Discount code '{code_data['code']}' has size restrictions ({sizes_display}) but no basket sizes provided - rejecting")
+                        return False, f"This code is only valid for sizes: {sizes_display}", None
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Invalid allowed_sizes JSON for code {code_data['code']}: {e}")
 
@@ -1248,8 +1288,11 @@ def validate_and_apply_discount_atomic(code_text: str, base_total_float: float, 
                             conn.rollback()
                             return False, f"This code is only valid for: {cities_display}", None
                     else:
-                        # No basket cities provided - code has restrictions but we can't validate
-                        logger.warning(f"Discount code '{code_data['code']}' has city restrictions but no basket cities provided")
+                        # No basket cities provided but code has restrictions - REJECT
+                        cities_display = ", ".join(allowed_cities)
+                        logger.warning(f"Discount code '{code_data['code']}' has city restrictions ({cities_display}) but no basket cities provided - rejecting")
+                        conn.rollback()
+                        return False, f"This code is only valid for: {cities_display}", None
             except (json_module.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Invalid allowed_cities JSON for code {code_data['code']}: {e}")
 
@@ -1274,6 +1317,12 @@ def validate_and_apply_discount_atomic(code_text: str, base_total_float: float, 
                             logger.info(f"Discount code '{code_data['code']}' only valid for products: {types_display}. Basket types: {basket_product_types}")
                             conn.rollback()
                             return False, f"This code is only valid for: {types_display}", None
+                    else:
+                        # No basket product types provided but code has restrictions - REJECT
+                        types_display = ", ".join(allowed_product_types)
+                        logger.warning(f"Discount code '{code_data['code']}' has product type restrictions ({types_display}) but no basket types provided - rejecting")
+                        conn.rollback()
+                        return False, f"This code is only valid for: {types_display}", None
             except (json_module.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Invalid allowed_product_types JSON for code {code_data['code']}: {e}")
         
@@ -1298,6 +1347,12 @@ def validate_and_apply_discount_atomic(code_text: str, base_total_float: float, 
                             logger.info(f"Discount code '{code_data['code']}' only valid for sizes: {sizes_display}. Basket sizes: {basket_sizes}")
                             conn.rollback()
                             return False, f"This code is only valid for sizes: {sizes_display}", None
+                    else:
+                        # No basket sizes provided but code has restrictions - REJECT
+                        sizes_display = ", ".join(allowed_sizes)
+                        logger.warning(f"Discount code '{code_data['code']}' has size restrictions ({sizes_display}) but no basket sizes provided - rejecting")
+                        conn.rollback()
+                        return False, f"This code is only valid for sizes: {sizes_display}", None
             except (json_module.JSONDecodeError, TypeError) as e:
                 logger.warning(f"Invalid allowed_sizes JSON for code {code_data['code']}: {e}")
 
@@ -1493,7 +1548,9 @@ async def handle_view_basket(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     if discount_code_to_revalidate:
         # Note: For revalidation of existing discounts, we don't use atomic to avoid double-charging
-        code_valid, validation_message, discount_details = validate_discount_code(discount_code_to_revalidate, float(total_after_reseller))
+        # Extract basket info for city/product/size restrictions
+        basket_cities, basket_product_types, basket_sizes = _extract_basket_info(basket)
+        code_valid, validation_message, discount_details = validate_discount_code(discount_code_to_revalidate, float(total_after_reseller), basket_cities, basket_product_types, basket_sizes)
         if code_valid and discount_details:
             general_discount_amount = Decimal(str(discount_details['discount_amount']))
             final_total = Decimal(str(discount_details['final_total']))
@@ -1717,13 +1774,16 @@ async def handle_remove_from_basket(update: Update, context: ContextTypes.DEFAUL
         elif context.user_data.get('applied_discount'):
             applied_discount_info = context.user_data['applied_discount']
             total_after_reseller_decimal = Decimal('0.0')
-            for item in context.user_data['basket']:
+            current_basket = context.user_data['basket']
+            for item in current_basket:
                 original_price = item.get('price', Decimal('0.0'))
                 product_type = item.get('product_type', '')
                 reseller_discount_percent = await asyncio.to_thread(get_reseller_discount, user_id, product_type)
                 item_reseller_discount = (original_price * reseller_discount_percent / Decimal('100')).quantize(Decimal('0.01'), rounding=ROUND_DOWN)
                 total_after_reseller_decimal += (original_price - item_reseller_discount)
-            code_valid, validation_message, _ = validate_discount_code(applied_discount_info['code'], float(total_after_reseller_decimal))
+            # Extract basket info for city/product/size restrictions
+            basket_cities, basket_product_types, basket_sizes = _extract_basket_info(current_basket)
+            code_valid, validation_message, _ = validate_discount_code(applied_discount_info['code'], float(total_after_reseller_decimal), basket_cities, basket_product_types, basket_sizes)
             if not code_valid:
                 reason_removed = lang_data.get("discount_removed_invalid_basket", "Discount removed (basket changed).")
                 logger.info(f"Removing invalid general discount '{applied_discount_info['code']}' for user {user_id} after item removal.")
@@ -1855,7 +1915,9 @@ async def handle_confirm_pay(update: Update, context: ContextTypes.DEFAULT_TYPE,
         final_total = total_after_reseller
         if applied_discount_info:
             # Note: For existing applied discounts, we don't re-validate atomically to avoid double-charging
-            code_valid, _, discount_details = validate_discount_code(applied_discount_info['code'], float(total_after_reseller))
+            # Extract basket info for city/product/size restrictions
+            basket_cities, basket_product_types, basket_sizes = _extract_basket_info(basket)
+            code_valid, _, discount_details = validate_discount_code(applied_discount_info['code'], float(total_after_reseller), basket_cities, basket_product_types, basket_sizes)
             if code_valid and discount_details:
                 final_total = Decimal(str(discount_details['final_total']))
                 discount_code_to_use = applied_discount_info.get('code')
